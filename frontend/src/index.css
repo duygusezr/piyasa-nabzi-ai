@@ -1,0 +1,114 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background-color: #070c15;
+    color: #e2e8f0;
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow: hidden;
+  }
+
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: #0c1320; }
+  ::-webkit-scrollbar-thumb { background: #1f2f44; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #2a3f5a; }
+}
+
+@layer components {
+  /* ── Terminal card ── */
+  .t-card {
+    background: #0f1929;
+    border: 1px solid #1a2535;
+    border-radius: 8px;
+  }
+  .t-card-sm { @apply t-card p-3; }
+  .t-card-md { @apply t-card p-4; }
+  .t-card-lg { @apply t-card p-5; }
+
+  /* ── Panel header ── */
+  .panel-header {
+    @apply flex items-center justify-between px-4 py-2.5 border-b border-t-border;
+  }
+  .panel-title {
+    @apply text-xs font-semibold uppercase tracking-widest text-slate-400;
+  }
+
+  /* ── Pill badges ── */
+  .badge { @apply inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-semibold; }
+  .badge-bull  { @apply badge bg-bull/15 text-bull border border-bull/25; }
+  .badge-bear  { @apply badge bg-bear/15 text-bear border border-bear/25; }
+  .badge-warn  { @apply badge bg-warn/15 text-warn border border-warn/25; }
+  .badge-info  { @apply badge bg-info/15 text-info border border-info/25; }
+  .badge-muted { @apply badge bg-t-muted text-slate-400 border border-t-border; }
+
+  /* ── Score bar ── */
+  .score-track {
+    @apply w-full rounded-full overflow-hidden;
+    height: 3px;
+    background: #1a2535;
+  }
+
+  /* ── Sidebar nav item ── */
+  .nav-item {
+    @apply flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-500
+           hover:text-slate-200 hover:bg-t-hover transition-all duration-150 cursor-pointer;
+  }
+  .nav-item.active {
+    @apply text-accent-cyan bg-accent-cyan/10 border border-accent-cyan/20;
+  }
+
+  /* ── Table ── */
+  .t-table { @apply w-full text-xs; }
+  .t-table thead tr { @apply border-b border-t-border; }
+  .t-table thead th { @apply px-3 py-2 text-left text-2xs font-semibold uppercase tracking-wider text-slate-500; }
+  .t-table tbody tr { @apply border-b border-t-border/50 hover:bg-t-hover transition-colors duration-100; }
+  .t-table tbody td { @apply px-3 py-2.5 text-slate-300; }
+
+  /* ── Input ── */
+  .t-input {
+    @apply w-full bg-t-surface border border-t-border rounded-md px-3 py-2 text-sm
+           text-slate-100 placeholder-slate-600
+           focus:outline-none focus:ring-1 focus:ring-accent-cyan/50 focus:border-accent-cyan/40
+           transition-all duration-150;
+  }
+
+  /* ── Button ── */
+  .t-btn-primary {
+    @apply px-4 py-2 rounded-md text-sm font-semibold
+           bg-accent-cyan text-t-bg
+           hover:bg-accent-cyan/90 transition-all duration-150
+           disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+  .t-btn-ghost {
+    @apply px-3 py-1.5 rounded text-xs font-medium text-slate-400 border border-t-border
+           hover:text-slate-200 hover:border-slate-500 transition-all duration-150;
+  }
+  .t-btn-ghost.active {
+    @apply text-accent-cyan border-accent-cyan/40 bg-accent-cyan/10;
+  }
+}
+
+/* ── Glowing live dot ── */
+@keyframes livePulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0,217,126,0.6); }
+  50%       { box-shadow: 0 0 0 4px rgba(0,217,126,0); }
+}
+.live-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: #00d97e;
+  animation: livePulse 2s ease-in-out infinite;
+}
+
+/* ── Ticker animation pause on hover ── */
+.ticker-wrap:hover .ticker-inner { animation-play-state: paused; }
