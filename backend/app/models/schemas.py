@@ -294,6 +294,7 @@ class SimulationSellRequest(BaseModel):
 
 class SimulationStrategySelectRequest(BaseModel):
     strategy_id: str
+    custom_allocation: Optional[list[AllocationItem]] = None
 
 
 # ── Paper Trading — Genişletilmiş Simülasyon Modelleri ────────────────────────

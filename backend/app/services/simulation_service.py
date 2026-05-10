@@ -773,8 +773,8 @@ def get_ai_strategies() -> list[SimulationStrategy]:
     return AI_STRATEGIES
 
 
-def select_strategy(strategy_id: str) -> dict:
-    """Kullanıcı AI stratejisi seçer — günde 1 kez değiştirebilir."""
+def select_strategy(strategy_id: str, custom_allocation: Optional[list[AllocationItem]] = None) -> dict:
+    """Kullanıcı AI stratejisi seçer — günde 1 kez değiştirebilir. Kullanıcı isterse oranları özelleştirebilir."""
     global _account
 
     if _account is None:
@@ -793,9 +793,18 @@ def select_strategy(strategy_id: str) -> dict:
     if not strategy:
         raise ValueError(f"Strateji bulunamadı: {strategy_id}")
 
-    _account.active_strategy      = strategy
+    import copy
+    strategy_to_use = copy.deepcopy(strategy)
+    if custom_allocation:
+        # Toplamın %100 olup olmadığını kontrol et
+        total_percent = sum(item.percent for item in custom_allocation)
+        if abs(total_percent - 100) > 1:
+            raise ValueError(f"Tahsisat oranları toplamı %100 olmalıdır (şu an: %{total_percent})")
+        strategy_to_use.allocation = custom_allocation
+
+    _account.active_strategy      = strategy_to_use
     _account.last_strategy_change = _now_iso()
-    logger.info("[simulation] Strateji seçildi: %s", strategy.name)
+    logger.info("[simulation] Strateji seçildi: %s", strategy_to_use.name)
 
     # ── Strateji tahsisatına göre otomatik sanal alım ─────────────────────────
     # Soyut varlık adı → gerçek sembol(ler) eşleşmesi
@@ -819,7 +828,7 @@ def select_strategy(strategy_id: str) -> dict:
     executed_trades: list[dict] = []
     snapshot_cash = _account.cash_balance   # anlık nakit — yüzdeler buna göre hesaplanır
 
-    for alloc in strategy.allocation:
+    for alloc in strategy_to_use.allocation:
         symbols = _STRATEGY_SYMBOL_MAP.get(alloc.asset, [])
         if not symbols:
             logger.info(
@@ -892,16 +901,16 @@ def select_strategy(strategy_id: str) -> dict:
             executed_trades.append(tx.model_dump())
             logger.info(
                 "[simulation:strategy] OTO-ALIŞ: %s x %.4f @ %.2f = %.2f TL  (strateji: %s)",
-                sym, quantity, price, total, strategy.name
+                sym, quantity, price, total, strategy_to_use.name
             )
 
     logger.info(
         "[simulation:strategy] Strateji uygulandı: %s | %d işlem | kalan nakit: %.2f TL",
-        strategy.name, len(executed_trades), _account.cash_balance
+        strategy_to_use.name, len(executed_trades), _account.cash_balance
     )
     return {
         "status": "ok",
-        "strategy": strategy.model_dump(),
+        "strategy": strategy_to_use.model_dump(),
         "executed_trades": executed_trades,
         "remaining_cash": round(_account.cash_balance, 2),
     }

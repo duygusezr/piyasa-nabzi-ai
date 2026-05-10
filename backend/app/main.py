@@ -344,7 +344,7 @@ async def simulation_ai_strategies():
 async def simulation_select_strategy(req: SimulationStrategySelectRequest):
     try:
         from app.services.simulation_service import select_strategy
-        result = select_strategy(req.strategy_id)
+        result = select_strategy(req.strategy_id, req.custom_allocation)
         return {"success": True, **result}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

@@ -288,6 +288,139 @@ function Toast({ msg, type, onClose }: { msg: string; type: 'success' | 'error';
   )
 }
 
+// ── AI Strateji Seçim Sihirbazı ────────────────────────────────────────────────
+function AiStrategyWizard({
+  strategies,
+  onSelectStrategy,
+  onCancel,
+}: {
+  strategies: SimulationStrategyExt[]
+  onSelectStrategy: (strategyId: string, customAllocation?: any[]) => void
+  onCancel?: () => void
+}) {
+  const [selectedBase, setSelectedBase] = useState<SimulationStrategyExt | null>(null)
+  const [allocations, setAllocations] = useState<{ asset: string; percent: number }[]>([])
+
+  const handleSelectBase = (s: SimulationStrategyExt) => {
+    setSelectedBase(s)
+    setAllocations([...s.allocation])
+  }
+
+  const handleSliderChange = (idx: number, val: number) => {
+    const newAlloc = [...allocations]
+    newAlloc[idx].percent = val
+    setAllocations(newAlloc)
+  }
+
+  const totalPercent = allocations.reduce((acc, curr) => acc + curr.percent, 0)
+  const isValid = totalPercent === 100
+
+  if (!selectedBase) {
+    return (
+      <div className="min-h-[calc(100vh-80px)] bg-gray-950 flex items-center justify-center p-6">
+        <div className="max-w-4xl w-full">
+          <div className="text-center mb-8">
+            <Bot size={48} className="text-purple-400 mx-auto mb-4" />
+            <h2 className="text-3xl font-bold text-white mb-2">AI Yönetim Modu</h2>
+            <p className="text-gray-400">Risk iştahınıza uygun bir strateji belirleyin, sepeti AI yönetsin.</p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {strategies.map(s => (
+              <button
+                key={s.strategy_id}
+                onClick={() => handleSelectBase(s)}
+                className="bg-gray-900 border border-gray-800 hover:border-purple-500 hover:bg-gray-800 transition-all rounded-2xl p-6 text-left group"
+              >
+                <h3 className="text-xl font-bold text-white mb-2 group-hover:text-purple-400 transition-colors">{s.name}</h3>
+                <p className="text-sm text-gray-400 mb-6 min-h-[60px]">{s.description}</p>
+                
+                <div className="space-y-3">
+                  <div>
+                    <div className="flex justify-between text-xs mb-1">
+                      <span className="text-gray-500">Risk</span>
+                      <span className="text-gray-400">{s.risk_score}/10</span>
+                    </div>
+                    <ScoreBar value={s.risk_score} color="bg-red-500" />
+                  </div>
+                  <div>
+                    <div className="flex justify-between text-xs mb-1">
+                      <span className="text-gray-500">Fırsat (Getiri)</span>
+                      <span className="text-gray-400">{s.opportunity_score}/10</span>
+                    </div>
+                    <ScoreBar value={s.opportunity_score} color="bg-green-500" />
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+          {onCancel && (
+            <div className="mt-8 text-center">
+              <button onClick={onCancel} className="text-gray-500 hover:text-white text-sm">İptal Et</button>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-[calc(100vh-80px)] bg-gray-950 flex items-center justify-center p-6">
+      <div className="max-w-2xl w-full bg-gray-900 border border-gray-800 rounded-3xl p-8 shadow-2xl">
+        <button onClick={() => setSelectedBase(null)} className="text-purple-400 text-sm flex items-center gap-1 hover:text-purple-300 mb-6 transition-colors">
+          <ChevronRight size={16} className="rotate-180" /> Geri Dön
+        </button>
+        
+        <div className="mb-6">
+          <h2 className="text-2xl font-bold text-white mb-2">{selectedBase.name} Stratejisi</h2>
+          <p className="text-sm text-gray-400">{selectedBase.logic}</p>
+        </div>
+
+        <div className="bg-gray-950 rounded-2xl border border-gray-800 p-6 mb-6">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-white font-semibold text-sm">Sepet Çeşitlendirmesi (Tahsisat)</h3>
+            <span className={`text-xs font-bold px-2 py-1 rounded-lg ${isValid ? 'bg-green-900/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
+              Toplam: %{totalPercent}
+            </span>
+          </div>
+          
+          <div className="space-y-5">
+            {allocations.map((alloc, idx) => (
+              <div key={alloc.asset}>
+                <div className="flex justify-between text-sm mb-2">
+                  <span className="text-gray-300 font-medium">{alloc.asset}</span>
+                  <span className="text-purple-400 font-bold">%{alloc.percent}</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={alloc.percent}
+                  onChange={(e) => handleSliderChange(idx, parseInt(e.target.value))}
+                  className="w-full h-2 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                />
+              </div>
+            ))}
+          </div>
+          
+          {!isValid && (
+            <p className="text-red-400 text-xs mt-4 text-center bg-red-900/20 py-2 rounded-lg border border-red-500/20">
+              Oranların toplamı tam olarak %100 olmalıdır. (Şu an: %{totalPercent})
+            </p>
+          )}
+        </div>
+
+        <button
+          disabled={!isValid}
+          onClick={() => onSelectStrategy(selectedBase.strategy_id, allocations)}
+          className="w-full py-4 rounded-xl font-bold text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          Stratejiyi Onayla ve Alımları Başlat
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ── Ana Bileşen ───────────────────────────────────────────────────────────────
 
 export default function SimulationPage() {
@@ -319,6 +452,7 @@ export default function SimulationPage() {
   const [chartRange, setChartRange] = useState('1G')
   const [rightTab, setRightTab] = useState<'analiz' | 'alsat'>('analiz')
   const [bottomTab, setBottomTab] = useState<'gecmis' | 'performans'>('gecmis')
+  const [showAiWizard, setShowAiWizard] = useState(false)
 
   // ── Setup ──
   const [setupBalance, setSetupBalance] = useState<number | null>(null)
@@ -609,14 +743,17 @@ export default function SimulationPage() {
     }
   }
 
-  const handleSelectStrategy = async (strategyId: string) => {
+  const handleSelectStrategy = async (strategyId: string, customAllocation?: any[]) => {
     if (strategyChangeLocked) return
     setStrategyError(null)
     try {
       const res = await fetch(`${BASE_URL}/api/simulation/ai/select-strategy`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ strategy_id: strategyId }),
+        body: JSON.stringify({
+          strategy_id: strategyId,
+          custom_allocation: customAllocation || undefined
+        }),
       })
       if (!res.ok) {
         const err = await res.json()
@@ -630,6 +767,7 @@ export default function SimulationPage() {
           : 'Strateji başarıyla seçildi.',
         type: 'success',
       })
+      setShowAiWizard(false)
       await fetchPortfolio()
       fetchTransactions()
     } catch (e: unknown) {
@@ -795,8 +933,39 @@ export default function SimulationPage() {
   }
 
   // ════════════════════════════════════════════════════════════════════════
-  // ANA PAPER TRADING EKRANI
+  // ANA PAPER TRADING EKRANI VEYA AI WIZARD
   // ════════════════════════════════════════════════════════════════════════
+
+  // AI Modundayız ve strateji seçilmemişse VEYA "Stratejiyi Değiştir" e tıklanmışsa Wizard göster
+  if (portfolio.mode === 'ai' && (!portfolio.active_strategy || showAiWizard)) {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white">
+        {/* Üst Bar Basit */}
+        <div className="border-b border-gray-800 bg-gray-900/80 px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Bot size={20} className="text-purple-400" />
+            <span className="font-bold text-white">Sanal Portföy <span className="text-gray-500 font-normal">| AI Kurulumu</span></span>
+          </div>
+          <button
+            onClick={handleReset}
+            className="px-3 py-1.5 text-xs text-gray-500 hover:text-red-400 bg-gray-800 hover:bg-red-900/20 rounded-lg transition-colors border border-gray-700"
+          >
+            Sıfırla
+          </button>
+        </div>
+        
+        {strategyLoading ? (
+          <div className="flex justify-center py-20"><Spinner /></div>
+        ) : (
+          <AiStrategyWizard
+            strategies={strategies}
+            onSelectStrategy={handleSelectStrategy}
+            onCancel={portfolio.active_strategy ? () => setShowAiWizard(false) : undefined}
+          />
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-gray-950 text-white">
@@ -1147,12 +1316,21 @@ export default function SimulationPage() {
         {/* ──────── SAĞ PANEL (w-80) ──────── */}
         <div className="w-80 flex-shrink-0 flex flex-col gap-3">
 
-          {/* AI Mod — Strateji Seçici */}
-          {portfolio.mode === 'ai' && (
+          {/* AI Mod — Aktif Strateji Özeti */}
+          {portfolio.mode === 'ai' && portfolio.active_strategy && (
             <div className="bg-gray-900 rounded-xl border border-purple-500/20 p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Bot size={15} className="text-purple-400" />
-                <span className="text-purple-400 font-semibold text-sm">AI Stratejileri</span>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Bot size={15} className="text-purple-400" />
+                  <span className="text-purple-400 font-semibold text-sm">Aktif Strateji</span>
+                </div>
+                <button
+                  onClick={() => setShowAiWizard(true)}
+                  disabled={strategyChangeLocked}
+                  className="text-xs text-purple-400 bg-purple-900/20 hover:bg-purple-900/40 border border-purple-500/30 px-2 py-1 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Değiştir
+                </button>
               </div>
 
               {strategyChangeLocked && (
@@ -1162,85 +1340,26 @@ export default function SimulationPage() {
                 </div>
               )}
 
-              {strategyError && (
-                <div className="bg-red-900/20 border border-red-500/20 rounded-lg p-2.5 mb-3 text-red-400 text-xs">
-                  {strategyError}
+              <div className="rounded-xl border border-purple-500 bg-purple-900/10 p-3">
+                <div className="flex items-start justify-between mb-1">
+                  <span className="text-white text-xs font-bold">{portfolio.active_strategy.name}</span>
                 </div>
-              )}
-
-              {strategyLoading ? (
-                <div className="flex justify-center py-4"><Spinner /></div>
-              ) : (
-                <div className="space-y-3">
-                  {strategies.map((s) => {
-                    const isActive = portfolio.active_strategy?.strategy_id === s.strategy_id
-                    return (
-                      <div
-                        key={s.strategy_id}
-                        className={`rounded-xl border p-3 ${
-                          isActive ? 'border-purple-500 bg-purple-900/10' : 'border-gray-700 bg-gray-800/30'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between mb-1">
-                          <div>
-                            <span className="text-white text-xs font-bold">{s.name}</span>
-                            {isActive && (
-                              <span className="ml-2 px-1.5 py-0.5 bg-purple-600 text-white text-xs rounded font-medium">
-                                Aktif
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <p className="text-gray-400 text-xs mb-2">{s.description}</p>
-                        <div className="space-y-1.5 mb-2">
-                          <div className="flex items-center gap-2">
-                            <span className="text-gray-500 text-xs w-16">Risk</span>
-                            <ScoreBar value={s.risk_score} max={10} color="bg-red-500" />
-                            <span className="text-gray-400 text-xs">{s.risk_score}/10</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-gray-500 text-xs w-16">Fırsat</span>
-                            <ScoreBar value={s.opportunity_score} max={10} color="bg-green-500" />
-                            <span className="text-gray-400 text-xs">{s.opportunity_score}/10</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-gray-500 text-xs w-16">Volatilite</span>
-                            <ScoreBar value={s.volatility_score} max={10} color="bg-amber-500" />
-                            <span className="text-gray-400 text-xs">{s.volatility_score}/10</span>
-                          </div>
-                        </div>
-                        <div className="mb-2">
-                          {s.allocation.slice(0, 3).map((a) => (
-                            <div key={a.asset} className="flex items-center gap-1.5 mb-1">
-                              <span className="text-gray-500 text-xs w-20 truncate">{a.asset}</span>
-                              <div className="flex-1 bg-gray-700 rounded-full h-1">
-                                <div className="bg-purple-500 h-1 rounded-full" style={{ width: `${a.percent}%` }} />
-                              </div>
-                              <span className="text-gray-400 text-xs">{a.percent}%</span>
-                            </div>
-                          ))}
-                        </div>
-                        <button
-                          disabled={isActive || strategyChangeLocked}
-                          onClick={() => handleSelectStrategy(s.strategy_id)}
-                          className={`w-full py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                            isActive
-                              ? 'bg-purple-600/40 text-purple-300 cursor-default'
-                              : strategyChangeLocked
-                              ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                              : 'bg-purple-700 hover:bg-purple-600 text-white'
-                          }`}
-                        >
-                          {isActive ? '✓ Aktif Strateji' : 'Bu Stratejiyi Seç'}
-                        </button>
-                      </div>
-                    )
-                  })}
+                <p className="text-gray-400 text-xs mb-2">{portfolio.active_strategy.description}</p>
+                <div className="space-y-1.5 mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-500 text-xs w-16">Risk</span>
+                    <ScoreBar value={portfolio.active_strategy.risk_score} max={10} color="bg-red-500" />
+                    <span className="text-gray-400 text-xs">{portfolio.active_strategy.risk_score}/10</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-500 text-xs w-16">Fırsat</span>
+                    <ScoreBar value={portfolio.active_strategy.opportunity_score} max={10} color="bg-green-500" />
+                    <span className="text-gray-400 text-xs">{portfolio.active_strategy.opportunity_score}/10</span>
+                  </div>
                 </div>
-              )}
+              </div>
             </div>
           )}
-
           {/* Analiz / Al-Sat Sekmeleri */}
           {selectedAsset ? (
             <div className="bg-gray-900 rounded-xl border border-gray-800 flex flex-col" style={{ maxHeight: 'calc(100vh - 280px)', overflowY: 'auto' }}>
