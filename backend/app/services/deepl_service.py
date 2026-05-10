@@ -3,8 +3,11 @@ DeepL Free API — sadece İngilizce makaleler için (lang=="en")
 Türkçe makalelerde (lang=="tr") title/description direkt kullanılır.
 Ücretsiz: 500.000 karakter/ay | https://www.deepl.com/pro#developer
 """
+import logging
 import httpx
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 _DEEPL_FREE_URL = "https://api-free.deepl.com/v2/translate"
 _DEEPL_PRO_URL  = "https://api.deepl.com/v2/translate"
@@ -45,7 +48,7 @@ async def translate_texts(texts: list[str], target_lang: str = "TR") -> list[str
             resp.raise_for_status()
             translations = resp.json().get("translations", [])
     except Exception as exc:
-        print(f"[deepl] Çeviri hatası: {exc}")
+        logger.warning("[deepl] Çeviri hatası: %s", exc)
         return texts
 
     result = list(texts)
@@ -94,6 +97,6 @@ async def translate_articles(articles: list[dict]) -> list[dict]:
 
     tr_count = sum(1 for a in articles if a.get("lang") == "tr")
     en_count = len(en_articles)
-    print(f"[deepl] {tr_count} TR makale direkt · {en_count} EN makale DeepL ile çevrildi")
+    logger.info("[deepl] %d TR makale direkt · %d EN makale DeepL ile çevrildi", tr_count, en_count)
 
     return articles

@@ -3,7 +3,7 @@ import json
 import logging
 import logging.config
 from datetime import datetime, timezone
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from app.config import settings
@@ -49,6 +49,21 @@ from app.models.schemas import (
     MarketData,
     AssistantAnalysis, AffectedAsset, ActionableOption,
     AllocationItem, AssistantScenario,
+    CreditRates,
+    MarketCalendarEvent,
+    AssistantAskRequest,
+    AssistantAskResponse,
+    SimulationAccount,
+    SimulationCreateRequest,
+    SimulationBuyRequest,
+    SimulationSellRequest,
+    SimulationStrategySelectRequest,
+    SimulationPerformance,
+    SimulationStrategy,
+    VirtualTransaction,
+    SimulationAsset,
+    AssetImpactAnalysis,
+    SimulationPortfolioSummary,
 )
 from app.agents import (
     user_goal_agent,
@@ -224,6 +239,242 @@ async def get_news_signals():
             "disclaimer": "Bu içerik yatırım tavsiyesi değildir.",
         }
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/market-calendar")
+async def get_market_calendar():
+    """Statik piyasa takvimi ve hatırlatıcılar."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    events = [
+        {"id": "evt-001", "title": "TCMB Para Politikası Kurulu Toplantısı", "date": "2026-06-19", "time": "14:00", "event_type": "merkez_bankasi", "importance": "yüksek", "affected_assets": ["USD/TRY", "BIST 100", "Altın"], "description": "Türkiye Cumhuriyet Merkez Bankası politika faizi kararı açıklanacak."},
+        {"id": "evt-002", "title": "TÜFE Enflasyon Verisi", "date": "2026-06-03", "time": "10:00", "event_type": "ekonomik", "importance": "yüksek", "affected_assets": ["USD/TRY", "BIST 100"], "description": "Mayıs ayı tüketici fiyat endeksi açıklanacak."},
+        {"id": "evt-003", "title": "Fed Faiz Kararı", "date": "2026-06-18", "time": "21:00", "event_type": "merkez_bankasi", "importance": "yüksek", "affected_assets": ["Bitcoin", "Altın", "USD/TRY"], "description": "ABD Merkez Bankası (Fed) faiz kararı ve Powell açıklaması."},
+        {"id": "evt-004", "title": "Çeyrek Sonu Bilanço Dönemi", "date": "2026-06-30", "time": "", "event_type": "kap", "importance": "orta", "affected_assets": ["BIST 100", "BIST 30"], "description": "Q2 bilanço döneminde şirket haberleri yoğunlaşacak."},
+        {"id": "evt-005", "title": "OPEC+ Toplantısı", "date": "2026-06-05", "time": "12:00", "event_type": "ekonomik", "importance": "orta", "affected_assets": ["Brent Petrol", "BIST 100"], "description": "OPEC+ üretim kararları petrol fiyatlarını etkileyebilir."},
+        {"id": "evt-006", "title": "Türkiye Büyüme Verisi (GSYİH)", "date": "2026-06-10", "time": "10:00", "event_type": "ekonomik", "importance": "orta", "affected_assets": ["USD/TRY", "BIST 100"], "description": "Q1 2026 GSYİH büyüme verisi açıklanacak."},
+        {"id": "evt-007", "title": "KAP Açıklama Yoğunluğu", "date": "2026-06-01", "time": "", "event_type": "kap", "importance": "düşük", "affected_assets": ["BIST 100"], "description": "Haziran başında KAP açıklamaları yoğunlaşabilir."},
+        {"id": "evt-008", "title": "ABD Tarım Dışı İstihdam (NFP)", "date": "2026-06-07", "time": "15:30", "event_type": "ekonomik", "importance": "yüksek", "affected_assets": ["Altın", "Bitcoin", "USD/TRY"], "description": "ABD istihdam verisi küresel piyasaları doğrudan etkiler."},
+        {"id": "evt-009", "title": "Jeopolitik Risk Takibi", "date": "2026-06-01", "time": "", "event_type": "diger", "importance": "orta", "affected_assets": ["Altın", "Brent Petrol"], "description": "Bölgesel gerilimler piyasa volatilitesini artırabilir."},
+        {"id": "evt-010", "title": "Halka Arz Takvimi", "date": "2026-06-15", "time": "", "event_type": "kap", "importance": "düşük", "affected_assets": ["BIST 100"], "description": "Haziran ayında birden fazla halka arz bekleniyor."},
+    ]
+    return {"events": events, "count": len(events)}
+
+
+# ── Simulation endpoints ───────────────────────────────────────────────────────
+
+@app.post("/api/simulation/create")
+async def simulation_create(req: SimulationCreateRequest):
+    try:
+        from app.services.simulation_service import create_account
+        account = create_account(req.initial_balance, req.mode, req.currency)
+        return account.model_dump()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/simulation/portfolio")
+async def simulation_portfolio():
+    try:
+        from app.services.simulation_service import get_account
+        account = get_account()
+        if account is None:
+            return {"account": None}
+        return account.model_dump()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/simulation/manual/buy")
+async def simulation_buy(req: SimulationBuyRequest):
+    try:
+        from app.services.simulation_service import buy
+        result = buy(req.symbol, req.name, req.quantity, req.price)
+        return {"success": True, **result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/simulation/manual/sell")
+async def simulation_sell(req: SimulationSellRequest):
+    try:
+        from app.services.simulation_service import sell
+        result = sell(req.symbol, req.quantity, req.price)
+        return {"success": True, **result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/simulation/transactions")
+async def simulation_transactions():
+    try:
+        from app.services.simulation_service import get_transactions
+        txs = get_transactions()
+        return {"transactions": [t.model_dump() for t in txs], "count": len(txs)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/simulation/performance")
+async def simulation_performance(range: str = Query("1d", regex="^(1d|1w|1m)$")):
+    try:
+        from app.services.simulation_service import get_performance
+        perf = get_performance(range)
+        return perf.model_dump()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/simulation/ai/strategies")
+async def simulation_ai_strategies():
+    try:
+        from app.services.simulation_service import get_ai_strategies
+        strategies = get_ai_strategies()
+        return {"strategies": [s.model_dump() for s in strategies]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/simulation/ai/select-strategy")
+async def simulation_select_strategy(req: SimulationStrategySelectRequest):
+    try:
+        from app.services.simulation_service import select_strategy
+        result = select_strategy(req.strategy_id)
+        return {"success": True, **result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Yeni Paper Trading endpoints ───────────────────────────────────────────────
+
+@app.get("/api/simulation/assets")
+async def simulation_assets():
+    """Simülasyonda işlem yapılabilecek tüm sanal varlıkları listele."""
+    try:
+        from app.services.simulation_service import get_assets
+        assets = get_assets()
+        return {"assets": [a.model_dump() for a in assets], "count": len(assets)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/simulation/assets/{symbol}/impact")
+async def simulation_asset_impact(
+    symbol: str,
+    amount: float = Query(10000.0, gt=0, description="İşlem tutarı (TL)"),
+    trade_type: str = Query("buy", regex="^(buy|sell)$", description="İşlem tipi"),
+):
+    """
+    Seçilen varlığın portföye, riske ve senaryolara etkisini analiz et.
+    İşlem gerçekleşmeden önce kullanıcıya gösterilir (pre-trade analiz).
+    """
+    try:
+        from app.services.simulation_service import get_asset_impact
+        impact = get_asset_impact(symbol.upper(), amount, trade_type)
+        if impact is None:
+            raise HTTPException(status_code=404, detail=f"Varlık bulunamadı: {symbol}")
+        return impact.model_dump()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/simulation/portfolio/summary")
+async def simulation_portfolio_summary():
+    """Kapsamlı portföy özeti — tüm P/L, risk skoru, ağırlıklar."""
+    try:
+        from app.services.simulation_service import get_portfolio_summary
+        summary = get_portfolio_summary()
+        if summary is None:
+            raise HTTPException(status_code=404, detail="Aktif simülasyon hesabı bulunamadı")
+        return summary.model_dump()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── AI Asistan endpoint ───────────────────────────────────────────────────────
+
+@app.post("/api/assistant/ask")
+async def assistant_ask(req: AssistantAskRequest):
+    """
+    Minimal AI Asistan endpoint'i.
+    Sadece soru + piyasa snapshot + haber başlıkları → Gemini analiz.
+    """
+    try:
+        market_data = await market_data_agent.run()
+        news_signals = await geopolitical_news_agent.run(quick=True)
+
+        market_snapshot = {
+            "btc_try":  market_data.bitcoin.price,
+            "gold_try": market_data.gold.price,
+            "usd_try":  market_data.usd_try.price,
+            "bist100":  market_data.bist100.price,
+        }
+        news_headlines = [s.tr_title or s.title for s in news_signals if s.tr_title or s.title]
+
+        # Soruyla ilgili haberleri filtrele
+        question_lower = req.question.lower()
+        related_news = [
+            s for s in news_signals
+            if any(word in (s.tr_title + s.tr_summary + s.title).lower()
+                   for word in question_lower.split() if len(word) > 3)
+        ][:5]
+
+        assistant_raw = await generate_assistant_analysis(
+            user_message=req.question,
+            capital=100000,
+            capital_currency="TRY",
+            duration_days=30,
+            assets=[],
+            market_snapshot=market_snapshot,
+            news_headlines=news_headlines,
+        )
+        assistant_analysis = _build_assistant_analysis(assistant_raw)
+
+        return AssistantAskResponse(
+            answer=assistant_analysis,
+            related_news=related_news,
+            generated_at=datetime.now(timezone.utc).isoformat(),
+        ).model_dump()
+
+    except Exception as e:
+        logger.error("[assistant/ask] Hata: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/interest-rates", response_model=CreditRates)
+async def get_interest_rates(
+    price: int = 100000,
+    month: int = 12,
+):
+    """
+    Banka bazlı kredi faiz oranları (ihtiyaç, konut, taşıt).
+    - price: kredi tutarı (TL), varsayılan 100.000
+    - month: vade (ay), varsayılan 12
+    """
+    try:
+        from app.services.collect_credit_service import get_credit_rates
+        raw = await get_credit_rates(price=price, month=month)
+        return CreditRates(
+            ihtiyac=[c for c in raw.get("ihtiyac", [])],
+            konut  =[c for c in raw.get("konut",   [])],
+            tasit  =[c for c in raw.get("tasit",   [])],
+            params =raw.get("params", {}),
+            fetched_at=raw.get("fetched_at", ""),
+            is_mock=raw.get("is_mock", False),
+        )
+    except Exception as e:
+        logger.error("[interest-rates] Hata: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

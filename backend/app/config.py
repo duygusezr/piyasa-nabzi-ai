@@ -27,6 +27,11 @@ class Settings:
     TCMB_EVDS_URL: str = "https://evds2.tcmb.gov.tr/service/evds"
     TCMB_API_KEY: str  = os.getenv("TCMB_API_KEY", "")
 
+    # ── CollectAPI (Türkçe haber — en hızlı kaynak) ──────────────
+    COLLECTAPI_KEY: str        = os.getenv("COLLECTAPI_KEY", "")
+    COLLECTAPI_URL: str        = "https://api.collectapi.com/news/getNews"
+
+
     # ── GDELT (dünya siyaseti/haber — ücretsiz, auth yok) ────────
     GDELT_API_URL: str     = "https://api.gdeltproject.org/api/v2/doc/doc"
     GDELT_MAX_RECORDS: int = int(os.getenv("GDELT_MAX_RECORDS", "10"))

@@ -1,11 +1,13 @@
 """
 Haber sinyalleri — RSS çekimi + DeepL çevirisi + Gemini finansal analizi
 Pipeline:
-  1. RSS → İngilizce ham makaleler
-  2. Zenginleştirme cache kontrolü → sadece görülmemiş makaleler işlenir
-  3. DeepL (paralel) → tr_title, tr_summary
-  4. Gemini (paralel) → gemini_comment, affected_assets, impact_direction, risk_level, confidence
-  5. Sonuçlar kalıcı bellek cache'ine yazılır → aynı başlık bir daha işlenmez
+  1. CollectAPI (birincil, ~300-600ms) veya RSS fallback
+  2. Finans filtresi — sadece piyasaları etkileyen haberler
+  3. Zenginleştirme cache kontrolü → sadece görülmemiş makaleler işlenir
+  4. DeepL (paralel) → tr_title, tr_summary (İngilizce haberler için)
+  5. Gemini (paralel) → gemini_comment, affected_assets, impact_direction, risk_level, confidence
+  6. Sonuçlar kalıcı bellek cache'ine yazılır → aynı başlık bir daha işlenmez
+  7. _last_known_signals → son başarılı çekim hafızada tutulur; hata olursa mock yerine o kullanılır
 
 Cache key = sha256(lowercase_title)[:20]
   Neden başlık? RSS feed'leri bazen aynı makalenin URL'sini günceller;
@@ -13,18 +15,27 @@ Cache key = sha256(lowercase_title)[:20]
 """
 import asyncio
 import hashlib
+import logging
 from collections import OrderedDict
 from time import time
 from datetime import datetime, timezone
 
+logger = logging.getLogger(__name__)
+
 from app.config import settings
 from app.models.schemas import NewsSignal, RiskLevel
-from app.services.rss_service import fetch_rss_news
+from app.services.rss_service import fetch_rss_news, _word_in
+from app.services.collect_api_service import fetch_collect_news
 
 # ── TTL Cache: /api/news-signals endpoint'i çok sık çağrıldığında RSS'i tekrar çekme ──
 _rss_cache: list | None = None
 _rss_cache_ts: float = 0.0
 _RSS_TTL = 90  # saniye
+
+# ── Son başarılı çekim hafızası ────────────────────────────────────────────────
+# Herhangi bir API/RSS hatası olduğunda MOCK_NEWS yerine son gerçek veriler döner.
+# Process restart'ta sıfırlanır (tasarım gereği — in-memory).
+_last_known_signals: list = []
 
 # ── Kalıcı zenginleştirme cache'i ─────────────────────────────────────────────
 # key  : sha256(başlık.lower())[:20]
@@ -57,79 +68,159 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-# ── Mock verisi (USE_MOCK_DATA=true veya RSS başarısız olduğunda) ───────────────
+# ── Son çare mock verisi ───────────────────────────────────────────────────────
+# Yalnızca hiç gerçek veri çekilmediğinde (cold start + tüm kaynaklar başarısız) kullanılır.
+# Normalde _last_known_signals bu görevi üstlenir.
 MOCK_NEWS: list[NewsSignal] = [
     NewsSignal(
-        id="news-001",
-        title="Fed Interest Rate Decision: Below Expectations",
-        summary="The US Federal Reserve unexpectedly kept interest rates unchanged.",
-        source="Mock", published_at=_now_iso(),
+        id="mock-001",
+        title="Fed Faiz Kararı: Beklentilerin Altında Kaldı",
+        summary="ABD Merkez Bankası beklentilerin aksine faiz oranlarını sabit tuttu.",
+        source="Önbellek", published_at=_now_iso(),
         affected_assets=["Bitcoin", "BIST 100", "USD/TRY"],
         risk_level=RiskLevel.medium,
-        market_impact="Simülasyon amaçlıdır.",
+        market_impact="Piyasa etkisi simülasyon amaçlı değerlendirilmektedir.",
         tr_title="Fed Faiz Kararı: Beklentilerin Altında Kaldı",
         tr_summary="ABD Merkez Bankası beklentilerin aksine faiz oranlarını sabit tuttu. Bu karar gelişmekte olan piyasalar için kısa vadeli rahatlama sinyali veriyor.",
         gemini_comment="Fed'in beklenmedik faiz kararı dolar değer kaybına, gelişmekte olan piyasalara fon girişine yol açabilir. BIST ve kripto varlıklar kısa vadede pozitif etki yaratabilir.",
         impact_direction="pozitif",
         confidence="medium",
+        category="Merkez Bankaları",
     ),
     NewsSignal(
-        id="news-002",
-        title="Middle East Tensions: Impact on Energy Prices",
-        summary="Escalating regional conflicts may negatively impact oil supply.",
-        source="Mock", published_at=_now_iso(),
-        affected_assets=["Altın", "BIST 100", "Petrol"],
+        id="mock-002",
+        title="Orta Doğu Gerilimi: Enerji Fiyatlarına Yansıma",
+        summary="Bölgedeki çatışmaların tırmanması petrol arzını olumsuz etkileyebilir. Altın güvenli liman olarak öne çıkıyor.",
+        source="Önbellek", published_at=_now_iso(),
+        affected_assets=["Altın", "Petrol", "BIST 100"],
         risk_level=RiskLevel.high,
-        market_impact="Simülasyon amaçlıdır.",
+        market_impact="Piyasa etkisi simülasyon amaçlı değerlendirilmektedir.",
         tr_title="Orta Doğu Gerilimi: Enerji Fiyatlarına Yansıma",
         tr_summary="Bölgedeki çatışmaların tırmanması petrol arzını olumsuz etkileyebilir. Altın güvenli liman olarak öne çıkıyor.",
         gemini_comment="Jeopolitik risk artışı altın ve petrolde yukarı yönlü baskı oluşturabilir. BIST ihracatçı şirketler olumlu ayrışabilirken enerji ithalatçısı sektörler baskılanabilir.",
         impact_direction="karışık",
         confidence="high",
+        category="Dünya Siyaseti",
     ),
     NewsSignal(
-        id="news-003",
-        title="Turkey Inflation Data Released",
-        summary="Annual inflation came in above expectations, policy uncertainty continues.",
-        source="Mock", published_at=_now_iso(),
+        id="mock-003",
+        title="Türkiye Enflasyon Verisi Açıklandı",
+        summary="Yıllık enflasyon beklentilerin üzerinde geldi. Merkez Bankası politika faizine ilişkin belirsizlik sürüyor.",
+        source="Önbellek", published_at=_now_iso(),
         affected_assets=["USD/TRY", "BIST 100", "Altın"],
         risk_level=RiskLevel.high,
-        market_impact="Simülasyon amaçlıdır.",
+        market_impact="Piyasa etkisi simülasyon amaçlı değerlendirilmektedir.",
         tr_title="Türkiye Enflasyon Verisi Açıklandı",
         tr_summary="Yıllık enflasyon beklentilerin üzerinde geldi. Merkez Bankası politika faizine ilişkin belirsizlik sürüyor.",
         gemini_comment="Beklenti üzeri enflasyon TL üzerindeki baskıyı artırabilir. Döviz bazlı varlıklar ve altın talep görebilirken BIST'te sektörel ayrışma yaşanabilir.",
         impact_direction="negatif",
         confidence="high",
+        category="Türkiye Ekonomisi",
     ),
     NewsSignal(
-        id="news-004",
-        title="Bitcoin ETF Approvals Increasing",
-        summary="Institutional demand growth expectations are being priced in.",
-        source="Mock", published_at=_now_iso(),
+        id="mock-004",
+        title="Bitcoin ETF Onayları Artıyor: Kurumsal Talep Güçleniyor",
+        summary="Kurumsal yatırımcıların Bitcoin ETF'lerine talebi artıyor. Piyasa bu gelişmeyi fiyatlamaya başladı.",
+        source="Önbellek", published_at=_now_iso(),
         affected_assets=["Bitcoin", "Ethereum"],
         risk_level=RiskLevel.medium,
-        market_impact="Simülasyon amaçlıdır.",
-        tr_title="Bitcoin ETF Onayları Artıyor",
-        tr_summary="Kurumsal talep artışı beklentisi piyasada fiyatlanıyor.",
+        market_impact="Piyasa etkisi simülasyon amaçlı değerlendirilmektedir.",
+        tr_title="Bitcoin ETF Onayları Artıyor: Kurumsal Talep Güçleniyor",
+        tr_summary="Kurumsal yatırımcıların Bitcoin ETF'lerine talebi artıyor. Piyasa bu gelişmeyi fiyatlamaya başladı.",
         gemini_comment="ETF onay haberleri Bitcoin'de kurumsal fon girişi beklentisi oluşturabilir. Volatilite yüksek kalmaya devam edebilir; pozisyon açılmadan önce risk yönetimi kritik.",
         impact_direction="pozitif",
         confidence="medium",
+        category="Kripto",
     ),
     NewsSignal(
-        id="news-005",
-        title="Defense Spending Rising: NATO Decision",
-        summary="NATO members commit to increasing defense budgets.",
-        source="Mock", published_at=_now_iso(),
+        id="mock-005",
+        title="NATO Savunma Harcamaları Artırıyor: Türk Savunma Sanayiine Talep",
+        summary="NATO üyesi ülkelerin savunma bütçelerini artırma kararı Türk savunma sanayiine ilgi çekiyor.",
+        source="Önbellek", published_at=_now_iso(),
         affected_assets=["ASELSAN", "BIST 100"],
         risk_level=RiskLevel.low,
-        market_impact="Simülasyon amaçlıdır.",
-        tr_title="Savunma Sanayii Harcamaları Artıyor: NATO Kararı",
+        market_impact="Piyasa etkisi simülasyon amaçlı değerlendirilmektedir.",
+        tr_title="NATO Savunma Harcamaları Artırıyor: Türk Savunma Sanayiine Talep",
         tr_summary="NATO üyesi ülkelerin savunma bütçelerini artırma kararı Türk savunma sanayiine ilgi çekiyor.",
         gemini_comment="NATO savunma harcama taahhütleri Türk savunma sanayii şirketlerinde (ASELSAN, ROKETSAN) sipariş beklentisi oluşturabilir. Haber akışına duyarlılık artabilir.",
         impact_direction="pozitif",
         confidence="low",
+        category="Borsa İstanbul",
+    ),
+    NewsSignal(
+        id="mock-006",
+        title="Altın Fiyatı Rekor Kırdı: Güvenli Liman Talebi Güçleniyor",
+        summary="Küresel belirsizlik ortamında altın ons fiyatı rekor seviyeye ulaştı. Merkez bankaları alımları sürüyor.",
+        source="Önbellek", published_at=_now_iso(),
+        affected_assets=["Altın", "USD/TRY"],
+        risk_level=RiskLevel.medium,
+        market_impact="Piyasa etkisi simülasyon amaçlı değerlendirilmektedir.",
+        tr_title="Altın Fiyatı Rekor Kırdı: Güvenli Liman Talebi Güçleniyor",
+        tr_summary="Küresel belirsizlik ortamında altın ons fiyatı rekor seviyeye ulaştı. Merkez bankaları alımları sürüyor.",
+        gemini_comment="Merkez bankası alımları ve jeopolitik risk altın talebini destekliyor. TL bazlı gram altın da döviz hareketlerine paralel yukarı yönlü seyredebilir.",
+        impact_direction="pozitif",
+        confidence="high",
+        category="Değerli Madenler",
+    ),
+    NewsSignal(
+        id="mock-007",
+        title="TCMB Faiz Kararı: Para Politikası Sıkılaşmaya Devam Ediyor",
+        summary="Türkiye Merkez Bankası politika faizini beklentilerle uyumlu şekilde açıkladı. Enflasyonla mücadele sürecek.",
+        source="Önbellek", published_at=_now_iso(),
+        affected_assets=["USD/TRY", "BIST 100", "Altın"],
+        risk_level=RiskLevel.medium,
+        market_impact="Piyasa etkisi simülasyon amaçlı değerlendirilmektedir.",
+        tr_title="TCMB Faiz Kararı: Para Politikası Sıkılaşmaya Devam Ediyor",
+        tr_summary="Türkiye Merkez Bankası politika faizini beklentilerle uyumlu şekilde açıkladı. Enflasyonla mücadele sürecek.",
+        gemini_comment="Faiz kararı piyasa beklentileriyle örtüştüğünde kısa vadeli aşırı oynaklık beklenmez. TL'de kısmi değer kazanımı görülebilir; sabit getirili araçlar öne çıkabilir.",
+        impact_direction="nötr",
+        confidence="medium",
+        category="Merkez Bankaları",
     ),
 ]
+
+
+def _detect_category(title: str, summary: str, source: str) -> str:
+    """
+    Haber başlığı ve kaynağa göre kategori belirle.
+    Kelime sınırı eşleşmesi (_word_in) kullanır:
+      "gözaltına" içindeki "altın" Değerli Madenler'e girdirilmez.
+    """
+    t = (title + " " + summary + " " + source).lower()
+
+    def has(*kws: str) -> bool:
+        return any(_word_in(k, t) for k in kws)
+
+    if has("bitcoin", "ethereum", "kripto", "crypto", "btc", "eth", "sol", "bnb", "blockchain", "altcoin"):
+        return "Kripto"
+    if has("bist", "borsa istanbul", "xu100", "xu030", "hisse senedi", "hisse fiyat",
+           "imkb", "aselsan", "thyao", "garan", "akbnk", "kchol", "tuprs", "sise", "bimas", "eregl"):
+        return "Borsa İstanbul"
+    if has("yatırım fonu", "portföy yönetimi", "tefas", "fon getiri", "fon yönetimi"):
+        return "Fonlar"
+    if has("altın fiyat", "gram altın", "ons altın", "altın ons", "gümüş fiyat",
+           "petrol fiyat", "brent petrol", "ham petrol", "wti petrol",
+           "değerli maden", "emtia fiyat"):
+        return "Değerli Madenler"
+    # Daha genel emtia/altın — ama altın kendi başınaysa da yakala
+    if has("altın", "gold", "gümüş", "silver", "petrol", "oil", "brent", "ons"):
+        return "Değerli Madenler"
+    if has("dolar", "euro", "usd", "eur", "döviz kuru", "kur değişim", "gbp", "forex", "döviz"):
+        return "Döviz"
+    if has("tcmb", "merkez bankası", "fed faiz", "ecb faiz", "faiz kararı",
+           "politika faizi", "central bank", "para politikası"):
+        return "Merkez Bankaları"
+    if has("kap açıklama", "özel durum", "bilanço", "temettü", "halka arz", "finansal sonuç", "finansal rapor"):
+        return "KAP / Finansal Duyurular"
+    if has("enflasyon", "gsyih", "işsizlik oranı", "türkiye büyüme", "türkiye ekonomi",
+           "tüfe", "üfe", "hazine bütçe", "bütçe açığı", "cari açık"):
+        return "Türkiye Ekonomisi"
+    if has("savaş", "çatışma", "yaptırım", "nato", "rusya", "ukrayna",
+           "orta doğu", "jeopolitik", "war", "conflict", "sanction", "gerilim"):
+        return "Dünya Siyaseti"
+    if has("satın alma", "birleşme", "şirket anlaşma", "ihracat anlaşma", "sözleşme imzalandı"):
+        return "Şirket Haberleri"
+    return "Genel"
 
 
 def _apply_cache(article: dict) -> dict:
@@ -138,6 +229,12 @@ def _apply_cache(article: dict) -> dict:
     cached = _enrichment_cache.get(key)
     if cached:
         article.update(cached)
+    if "category" not in article:
+        article["category"] = _detect_category(
+            article.get("title", ""),
+            article.get("description") or article.get("summary") or "",
+            article.get("source", ""),
+        )
     return article
 
 
@@ -166,6 +263,7 @@ def _rss_to_signal(article: dict, idx: int) -> NewsSignal:
         gemini_comment=article.get("gemini_comment", ""),
         impact_direction=article.get("impact_direction", "nötr"),
         confidence=article.get("confidence", "medium"),
+        category=_detect_category(title, summary, article.get("source", "")),
     )
 
 
@@ -194,9 +292,10 @@ async def _enrich_uncached(articles: list[dict]) -> None:
             "impact_direction": article.get("impact_direction", "nötr"),
             "risk_level":       article.get("risk_level", "medium"),
             "confidence":       article.get("confidence", "medium"),
+            "category":         article.get("category", "Genel"),
         })
-    print(f"[news:cache] {len(articles)} makale zenginleştirildi ve cache'e yazıldı."
-          f" Toplam cache: {len(_enrichment_cache)} makale.")
+    logger.info("[news:cache] %d makale zenginleştirildi ve cache'e yazıldı. Toplam cache: %d makale.",
+                len(articles), len(_enrichment_cache))
 
 
 async def _run_deepl(articles: list[dict]) -> None:
@@ -207,7 +306,7 @@ async def _run_deepl(articles: list[dict]) -> None:
         from app.services.deepl_service import translate_articles
         await asyncio.wait_for(translate_articles(articles), timeout=15.0)
     except Exception as exc:
-        print(f"[news] DeepL çeviri atlandı: {exc}")
+        logger.warning("[news] DeepL çeviri atlandı: %s", exc)
 
 
 async def _run_gemini(articles: list[dict]) -> None:
@@ -218,39 +317,61 @@ async def _run_gemini(articles: list[dict]) -> None:
         from app.services.gemini_service import enrich_financial_batch
         await asyncio.wait_for(enrich_financial_batch(articles), timeout=25.0)
     except Exception as exc:
-        print(f"[news] Gemini finansal analiz atlandı: {exc}")
+        logger.warning("[news] Gemini finansal analiz atlandı: %s", exc)
+
+
+async def _fetch_articles() -> list[dict]:
+    """
+    Haber kaynağı önceliği:
+      1. CollectAPI — Türkçe, ~300-600ms, çeviri gerekmez (KEY varsa)
+      2. RSS        — fallback, ~1-2s, EN haberler DeepL ile çevrilir
+    """
+    # CollectAPI dene
+    articles = await fetch_collect_news()
+    if articles:
+        logger.info("[news] Kaynak: CollectAPI (%d haber)", len(articles))
+        return articles
+
+    # Fallback: RSS
+    logger.info("[news] CollectAPI boş/yok → RSS fallback")
+    return await fetch_rss_news()
 
 
 async def get_news_signals() -> list[NewsSignal]:
     """
-    Tam pipeline: RSS + DeepL çevirisi + Gemini finansal analizi.
-    /api/news-signals endpoint'i ve 5dk'lık arka plan yenileme tarafından çağrılır.
-    İlk yüklemede ~3-5s, sonrasında cache'ten anında döner.
+    Tam pipeline: CollectAPI (önce) veya RSS + DeepL + Gemini finansal analizi.
+    /api/news-signals endpoint'i tarafından çağrılır.
+    İlk yüklemede ~1-3s (CollectAPI), sonrasında cache'ten anında döner.
+
+    Fallback önceliği (hata durumunda):
+      1. _last_known_signals → son başarılı gerçek çekim
+      2. MOCK_NEWS           → son çare (sadece hiç gerçek veri yoksa)
     """
-    global _rss_cache, _rss_cache_ts
+    global _rss_cache, _rss_cache_ts, _last_known_signals
 
     if settings.USE_MOCK_DATA:
-        return MOCK_NEWS
+        return _last_known_signals or MOCK_NEWS
 
-    # RSS cache kontrolü — 90s içinde tekrar işleme
+    # Cache kontrolü — 90s içinde tekrar işleme
     if _rss_cache is not None and (time() - _rss_cache_ts) < _RSS_TTL:
         return _rss_cache
 
     try:
-        articles = await fetch_rss_news()
+        articles = await _fetch_articles()
         if not articles:
-            return MOCK_NEWS
+            logger.warning("[news] Kaynaklardan haber çekilemedi → son bilinen haberler kullanılıyor.")
+            return _last_known_signals or MOCK_NEWS
 
         uncached  = [a for a in articles if _cache_key(a) not in _enrichment_cache]
         hit_count = len(articles) - len(uncached)
 
         if uncached:
-            print(f"[news:cache] {hit_count} makale cache'ten · "
-                  f"{len(uncached)} yeni makale → DeepL + Gemini başlatılıyor…")
+            logger.info("[news:cache] %d makale cache'ten · %d yeni → DeepL + Gemini başlatılıyor…",
+                        hit_count, len(uncached))
             await _enrich_uncached(uncached)
         else:
-            print(f"[news:cache] Tüm {hit_count} makale cache'ten geldi — "
-                  f"DeepL ve Gemini çağrılmadı. ✓")
+            logger.info("[news:cache] Tüm %d makale cache'ten geldi — DeepL/Gemini çağrılmadı. ✓",
+                        hit_count)
 
         for article in articles:
             _apply_cache(article)
@@ -258,10 +379,19 @@ async def get_news_signals() -> list[NewsSignal]:
         signals = _build_signals(articles)
         _rss_cache    = signals
         _rss_cache_ts = time()
+
+        # ✅ Başarılı çekimi hafızaya yaz (hata fallback'i için)
+        if signals:
+            _last_known_signals = signals
+            logger.debug("[news] Son bilinen haberler güncellendi: %d sinyal.", len(signals))
+
         return signals
 
     except Exception as exc:
-        print(f"[news] Haber yükleme hatası: {exc}")
+        logger.error("[news] Haber yükleme hatası: %s", exc)
+        if _last_known_signals:
+            logger.info("[news] Son bilinen %d haber fallback olarak döndürülüyor.", len(_last_known_signals))
+            return _last_known_signals
         return MOCK_NEWS
 
 
@@ -272,34 +402,40 @@ async def get_news_signals_quick() -> list[NewsSignal]:
 
     Öncelik:
       1. _rss_cache geçerliyse anında döner (0ms)
-      2. RSS çek (~1s) + mevcut _enrichment_cache uygula (Gemini yok)
-      3. Hata → MOCK_NEWS
+      2. CollectAPI (~300-600ms, Türkçe, çeviri yok) → en hızlı
+      3. RSS fallback (~1-2s)
+      4. Hata → _last_known_signals veya MOCK_NEWS
     """
+    global _last_known_signals
+
     if settings.USE_MOCK_DATA:
-        return MOCK_NEWS
+        return _last_known_signals or MOCK_NEWS
 
     # Geçerli cache varsa hemen dön
     if _rss_cache is not None and (time() - _rss_cache_ts) < _RSS_TTL:
         return _rss_cache
 
     try:
-        articles = await fetch_rss_news()
+        articles = await _fetch_articles()
         if not articles:
-            return MOCK_NEWS
+            return _last_known_signals or MOCK_NEWS
 
         # Enrichment cache'ten ne varsa uygula — yeni çağrı YOK
         for article in articles:
             _apply_cache(article)
 
         cached_count = sum(1 for a in articles if _cache_key(a) in _enrichment_cache)
-        print(f"[news:quick] {cached_count}/{len(articles)} makale cache'ten, "
-              f"zenginleştirme beklenmedi.")
+        logger.debug("[news:quick] %d/%d makale cache'ten, zenginleştirme beklenmedi.",
+                     cached_count, len(articles))
 
-        return _build_signals(articles)
+        signals = _build_signals(articles)
+        if signals:
+            _last_known_signals = signals
+        return signals
 
     except Exception as exc:
-        print(f"[news:quick] Hata: {exc}")
-        return MOCK_NEWS
+        logger.error("[news:quick] Hata: %s", exc)
+        return _last_known_signals or MOCK_NEWS
 
 
 def _build_signals(articles: list[dict]) -> list[NewsSignal]:
@@ -309,5 +445,5 @@ def _build_signals(articles: list[dict]) -> list[NewsSignal]:
         try:
             signals.append(_rss_to_signal(article, i))
         except Exception as exc:
-            print(f"[news] Makale #{i} dönüştürme hatası: {exc}")
+            logger.warning("[news] Makale #%d dönüştürme hatası: %s", i, exc)
     return signals

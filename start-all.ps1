@@ -1,4 +1,5 @@
-$root = $PSScriptRoot
+# $PSScriptRoot boş kalırsa (doğrudan çalıştırıldığında) scriptin bulunduğu dizini kullan
+$root = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 
 # Backend — PYTHONIOENCODING=utf-8 ile Türkçe log desteği, venv varsa otomatik aktif
 Start-Process powershell -ArgumentList "-NoExit", "-Command", `
