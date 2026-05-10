@@ -557,6 +557,19 @@ export default function SimulationPage() {
       setTradeError('Yetersiz nakit bakiye.')
       return
     }
+    if (tradeMode === 'sell') {
+      const pos = portfolio?.positions.find((p) => p.symbol === selectedAsset.symbol)
+      if (!pos) {
+        setTradeError(`Portföyünüzde ${selectedAsset.symbol} pozisyonu bulunmuyor. Önce alım yapmalısınız.`)
+        return
+      }
+      if (qty > pos.quantity) {
+        setTradeError(
+          `Yetersiz pozisyon: ${pos.quantity.toFixed(4)} adet mevcut, ${qty} satılmak isteniyor.`
+        )
+        return
+      }
+    }
     setShowImpactPreview(true)
     setPendingTrade(true)
   }
@@ -609,14 +622,23 @@ export default function SimulationPage() {
         const err = await res.json()
         throw new Error(err.detail || 'Strateji seçilemedi')
       }
-      setToast({ msg: 'Strateji başarıyla seçildi.', type: 'success' })
+      const data = await res.json()
+      const tradeCount = data.executed_trades?.length ?? 0
+      setToast({
+        msg: tradeCount > 0
+          ? `Strateji seçildi — ${tradeCount} otomatik alım gerçekleştirildi.`
+          : 'Strateji başarıyla seçildi.',
+        type: 'success',
+      })
       await fetchPortfolio()
+      fetchTransactions()
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Hata'
       setStrategyError(msg)
       setToast({ msg, type: 'error' })
     }
   }
+
 
   // ── Yükleniyor Durumu ────────────────────────────────────────────────────
 

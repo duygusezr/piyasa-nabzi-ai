@@ -359,7 +359,7 @@ async def simulation_assets():
     """Simülasyonda işlem yapılabilecek tüm sanal varlıkları listele."""
     try:
         from app.services.simulation_service import get_assets
-        assets = get_assets()
+        assets = await get_assets()
         return {"assets": [a.model_dump() for a in assets], "count": len(assets)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -377,7 +377,7 @@ async def simulation_asset_impact(
     """
     try:
         from app.services.simulation_service import get_asset_impact
-        impact = get_asset_impact(symbol.upper(), amount, trade_type)
+        impact = await get_asset_impact(symbol.upper(), amount, trade_type)
         if impact is None:
             raise HTTPException(status_code=404, detail=f"Varlık bulunamadı: {symbol}")
         return impact.model_dump()
@@ -389,12 +389,12 @@ async def simulation_asset_impact(
 
 @app.get("/api/simulation/portfolio/summary")
 async def simulation_portfolio_summary():
-    """Kapsamlı portföy özeti — tüm P/L, risk skoru, ağırlıklar."""
+    """Mevcut simülasyon portföyünün detaylı özetini ve performansını getirir."""
     try:
         from app.services.simulation_service import get_portfolio_summary
-        summary = get_portfolio_summary()
-        if summary is None:
-            raise HTTPException(status_code=404, detail="Aktif simülasyon hesabı bulunamadı")
+        summary = await get_portfolio_summary()
+        if not summary:
+            raise HTTPException(status_code=404, detail="Aktif simülasyon hesabı bulunamadı.")
         return summary.model_dump()
     except HTTPException:
         raise

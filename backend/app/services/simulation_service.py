@@ -4,8 +4,10 @@ Gerçek para / gerçek emir yoktur. Tüm veriler simülasyon amaçlıdır.
 Process restart'ta sıfırlanır (tasarım gereği — in-memory).
 """
 import uuid
+import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
+from time import time
 from typing import Optional
 
 from app.models.schemas import (
@@ -60,6 +62,67 @@ _SIMULATION_ASSETS: list[dict] = [
 
 # Hızlı erişim dict'i
 _ASSETS_BY_SYMBOL: dict[str, dict] = {a["symbol"]: a for a in _SIMULATION_ASSETS}
+
+# ── Canlı fiyat güncelleme — TTL cache ───────────────────────────────────────
+_LIVE_PRICE_TTL   = 60   # saniye
+_last_price_sync: float = 0.0
+
+
+async def _sync_live_prices() -> None:
+    """
+    Binance/TCMB/Yahoo Finance'dan canlı fiyatları çek ve
+    _SIMULATION_ASSETS / _ASSETS_BY_SYMBOL sözlüğünü güncelle.
+    60 saniyelik TTL — çok sık API çağrısı yapmaz.
+    """
+    global _last_price_sync
+    if time() - _last_price_sync < _LIVE_PRICE_TTL:
+        return
+
+    try:
+        from app.services.market_data_service import get_market_data
+        market = await get_market_data()
+
+        # market.assets içindeki tüm varlıkları sembol → fiyat olarak topla
+        live: dict[str, float] = {}
+        for asset in market.assets:
+            if asset.price and asset.price > 0 and not asset.is_mock:
+                live[asset.symbol] = asset.price
+
+        # Kripto — Binance'dan TRY karşılığı doğrudan geliyor
+        # BTC, ETH, BNB, SOL → sembol eşleştirmesi zaten yapılmış
+        # BIST hisseleri — Yahoo Finance'dan geliyor
+        # XAU (gram altın) — PAXG/Binance veya TCMB
+
+        updated = 0
+        for asset_def in _SIMULATION_ASSETS:
+            sym = asset_def["symbol"]
+            if sym in live:
+                old_price = asset_def["price"]
+                new_price = live[sym]
+                asset_def["price"] = new_price
+                # change_pct güncelle
+                if old_price and old_price > 0:
+                    asset_def["change_pct"] = round((new_price - old_price) / old_price * 100, 4)
+                updated += 1
+
+        # Ons altın varsa → gram altına çevir (1 troy ons = 31.1035 gram)
+        xauusd_live = next(
+            (a.price for a in market.assets if a.symbol == "XAUUSD" and not a.is_mock), None
+        )
+        if xauusd_live and xauusd_live > 0:
+            _ASSETS_BY_SYMBOL.get("XAUUSD", {})  # var mı kontrol et
+            xauusd_def = _ASSETS_BY_SYMBOL.get("XAUUSD")
+            if xauusd_def:
+                xauusd_def["price"] = xauusd_live
+                updated += 1
+
+        _last_price_sync = time()
+        logger.info(
+            "[simulation:sync] Canlı fiyatlar guncellendi: %d/%d varlik",
+            updated, len(_SIMULATION_ASSETS)
+        )
+    except Exception as exc:
+        logger.warning("[simulation:sync] Fiyat senkronizasyonu basarisiz: %s", exc)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -342,8 +405,9 @@ def _enrich_positions(positions: list[VirtualPosition], total_value: float) -> l
 # PUBLIC API
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_assets() -> list[SimulationAsset]:
-    """Tüm işlem yapılabilecek sanal varlıkları döndür."""
+async def get_assets() -> list[SimulationAsset]:
+    """Tüm işlem yapılabilecek sanal varlıkları döndür (canlı fiyatlarla)."""
+    await _sync_live_prices()
     now = _now_iso()
     return [
         SimulationAsset(
@@ -355,15 +419,16 @@ def get_assets() -> list[SimulationAsset]:
             risk_level=a["risk_level"],
             volatility_score=a["volatility_score"],
             news_sensitivity=a["news_sensitivity"],
-            data_status="mock",
+            data_status="live",
             updated_at=now,
         )
         for a in _SIMULATION_ASSETS
     ]
 
 
-def get_asset(symbol: str) -> Optional[SimulationAsset]:
-    """Sembolden tek varlık getir."""
+async def get_asset(symbol: str) -> Optional[SimulationAsset]:
+    """Sembolden tek varlık getir (canlı fiyatla)."""
+    await _sync_live_prices()
     meta = _get_asset_meta(symbol)
     if not meta:
         return None
@@ -376,16 +441,17 @@ def get_asset(symbol: str) -> Optional[SimulationAsset]:
         risk_level=meta["risk_level"],
         volatility_score=meta["volatility_score"],
         news_sensitivity=meta["news_sensitivity"],
-        data_status="mock",
+        data_status="live",
         updated_at=_now_iso(),
     )
 
 
-def get_asset_impact(symbol: str, amount: float, trade_type: str = "buy") -> Optional[AssetImpactAnalysis]:
+async def get_asset_impact(symbol: str, amount: float, trade_type: str = "buy") -> Optional[AssetImpactAnalysis]:
     """
     Seçilen varlığın portföye, riske ve senaryolara etkisini hesapla.
     İşlem gerçekleşmeden önce kullanıcıya gösterilir (pre-trade analysis).
     """
+    await _sync_live_prices()
     meta = _get_asset_meta(symbol)
     if not meta:
         return None
@@ -480,11 +546,13 @@ def get_asset_impact(symbol: str, amount: float, trade_type: str = "buy") -> Opt
     )
 
 
-def get_portfolio_summary() -> Optional[SimulationPortfolioSummary]:
+async def get_portfolio_summary() -> Optional[SimulationPortfolioSummary]:
     """Kapsamlı portföy özeti döndür (tüm hesap + performans + risk)."""
     if _account is None:
         return None
 
+    await _sync_live_prices()
+    
     cash = _account.cash_balance
     raw_positions = _account.positions
 
@@ -728,4 +796,113 @@ def select_strategy(strategy_id: str) -> dict:
     _account.active_strategy      = strategy
     _account.last_strategy_change = _now_iso()
     logger.info("[simulation] Strateji seçildi: %s", strategy.name)
-    return {"status": "ok", "strategy": strategy.model_dump()}
+
+    # ── Strateji tahsisatına göre otomatik sanal alım ─────────────────────────
+    # Soyut varlık adı → gerçek sembol(ler) eşleşmesi
+    _STRATEGY_SYMBOL_MAP: dict[str, list[str]] = {
+        # Düşük Risk
+        "TL Nakit / Para Piyasası Fonu": [],              # nakit olarak bırak
+        "Gram Altın":                    ["XAU"],
+        "BIST 30":                       ["XU030"],
+        "Borçlanma Araçları Fonu":       ["BORCLANMA_FONU"],
+        # Dengeli
+        "Altın":                         ["XAU"],
+        "BIST Hisseleri":                ["GARAN", "THYAO"],
+        "Döviz Bazlı Varlık":            ["XAUUSD"],
+        "Kripto":                        ["BTC"],
+        "Nakit":                         [],               # nakit olarak bırak
+        # Agresif
+        "BIST Tema Hisseleri":           ["ASELS", "THYAO", "FROTO"],
+        "Fon":                           ["HISSE_FONU"],
+    }
+
+    executed_trades: list[dict] = []
+    snapshot_cash = _account.cash_balance   # anlık nakit — yüzdeler buna göre hesaplanır
+
+    for alloc in strategy.allocation:
+        symbols = _STRATEGY_SYMBOL_MAP.get(alloc.asset, [])
+        if not symbols:
+            logger.info(
+                "[simulation:strategy] '%s' → nakit olarak tutuldu (%%%d)",
+                alloc.asset, alloc.percent
+            )
+            continue
+
+        budget = snapshot_cash * (alloc.percent / 100.0)
+        if budget <= 0:
+            continue
+
+        budget_per_symbol = budget / len(symbols)
+
+        for sym in symbols:
+            meta = _get_asset_meta(sym)
+            if not meta:
+                logger.warning("[simulation:strategy] Sembol bulunamadı: %s", sym)
+                continue
+            price = float(meta["price"])
+            if price <= 0:
+                continue
+            quantity = round(budget_per_symbol / price, 6)
+            if quantity <= 0:
+                continue
+            total = quantity * price
+            if total > _account.cash_balance:
+                logger.warning(
+                    "[simulation:strategy] Yetersiz bakiye — %s için %.2f TL gerekli, %.2f TL mevcut",
+                    sym, total, _account.cash_balance
+                )
+                continue
+
+            existing = next((p for p in _account.positions if p.symbol == sym), None)
+            if existing:
+                new_qty      = existing.quantity + quantity
+                new_avg_cost = (existing.quantity * existing.avg_cost + total) / new_qty
+                existing.quantity      = new_qty
+                existing.avg_cost      = new_avg_cost
+                existing.current_price = price
+                existing.market_value  = new_qty * price
+            else:
+                _account.positions.append(VirtualPosition(
+                    symbol=sym,
+                    name=meta["name"],
+                    quantity=quantity,
+                    avg_cost=price,
+                    current_price=price,
+                    pnl=0.0,
+                    pnl_pct=0.0,
+                    category=meta["category"],
+                    market_value=total,
+                    risk_level=meta["risk_level"],
+                    news_sensitivity=meta["news_sensitivity"],
+                ))
+
+            _account.cash_balance -= total
+
+            tx = VirtualTransaction(
+                id=str(uuid.uuid4())[:8],
+                timestamp=_now_iso(),
+                tx_type="buy",
+                symbol=sym,
+                name=meta["name"],
+                quantity=quantity,
+                price=price,
+                total=total,
+            )
+            _transactions.append(tx)
+            executed_trades.append(tx.model_dump())
+            logger.info(
+                "[simulation:strategy] OTO-ALIŞ: %s x %.4f @ %.2f = %.2f TL  (strateji: %s)",
+                sym, quantity, price, total, strategy.name
+            )
+
+    logger.info(
+        "[simulation:strategy] Strateji uygulandı: %s | %d işlem | kalan nakit: %.2f TL",
+        strategy.name, len(executed_trades), _account.cash_balance
+    )
+    return {
+        "status": "ok",
+        "strategy": strategy.model_dump(),
+        "executed_trades": executed_trades,
+        "remaining_cash": round(_account.cash_balance, 2),
+    }
+
