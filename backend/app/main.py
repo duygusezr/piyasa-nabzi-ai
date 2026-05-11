@@ -72,7 +72,8 @@ from app.agents import (
 from app.agents.asset_impact_agent import _rule_based_impact
 from app.services.scenario_service import build_simulation_portfolio
 from app.services.gemini_service import generate_assistant_analysis
-from app.routers.auth import router as auth_router, get_current_user
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from pydantic import BaseModel
 
 app = FastAPI(
     title="Piyasa Nabzı AI",
@@ -88,8 +89,56 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Auth router ────────────────────────────────────────────────────────────────
-app.include_router(auth_router)
+# ── Auth helpers (inline — router bağımlılığını kaldır) ───────────────────────
+_bearer = HTTPBearer(auto_error=False)
+
+class _RegisterReq(BaseModel):
+    email: str
+    password: str
+
+class _LoginReq(BaseModel):
+    email: str
+    password: str
+
+def get_current_user(
+    creds: HTTPAuthorizationCredentials = Depends(_bearer),
+) -> dict:
+    if not creds:
+        raise HTTPException(401, "Giriş yapmanız gerekiyor.")
+    from app.services.auth_service import decode_token
+    payload = decode_token(creds.credentials)
+    if not payload:
+        raise HTTPException(401, "Oturum süresi dolmuş veya geçersiz token.")
+    return payload
+
+@app.post("/api/auth/register", tags=["auth"])
+async def auth_register(req: _RegisterReq):
+    from app.services.auth_service import register_user
+    email = req.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(400, "Geçerli bir e-posta adresi girin.")
+    if len(req.password) < 6:
+        raise HTTPException(400, "Şifre en az 6 karakter olmalıdır.")
+    result = register_user(email, req.password)
+    if result is None:
+        raise HTTPException(409, "Bu e-posta adresi zaten kayıtlı.")
+    return {"token": result["token"], "user": {"id": result["id"], "email": result["email"]}}
+
+@app.post("/api/auth/login", tags=["auth"])
+async def auth_login(req: _LoginReq):
+    from app.services.auth_service import login_user
+    result = login_user(req.email, req.password)
+    if result is None:
+        raise HTTPException(401, "E-posta veya şifre hatalı.")
+    return {"token": result["token"], "user": {"id": result["id"], "email": result["email"]}}
+
+@app.get("/api/auth/me", tags=["auth"])
+async def auth_me(current_user: dict = Depends(get_current_user)):
+    from app.services.auth_service import get_user_by_id
+    user = get_user_by_id(current_user["sub"])
+    if not user:
+        raise HTTPException(404, "Kullanıcı bulunamadı.")
+    return {"id": user["id"], "email": user["email"], "created_at": user["created_at"]}
 
 
 # ── Veritabanı başlatma ────────────────────────────────────────────────────────

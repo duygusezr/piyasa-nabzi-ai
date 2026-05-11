@@ -114,7 +114,22 @@ interface VirtualTransaction {
 
 // ── Sabitler ──────────────────────────────────────────────────────────────────
 
-const BASE_URL = 'http://localhost:8001'
+const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8001'
+
+function getToken(): string | null {
+  try {
+    const s = localStorage.getItem('pn_auth')
+    return s ? (JSON.parse(s)?.token ?? null) : null
+  } catch { return null }
+}
+function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const token = getToken()
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...extra,
+  }
+}
 
 const CATEGORY_TABS = [
   'Kripto',
@@ -477,7 +492,8 @@ export default function SimulationPage() {
   const fetchPortfolio = useCallback(async () => {
     try {
       setPortfolioError(null)
-      const res = await fetch(`${BASE_URL}/api/simulation/portfolio/summary`)
+      const res = await fetch(`${BASE_URL}/api/simulation/portfolio/summary`, { headers: authHeaders() })
+      if (res.status === 401) { setPortfolio(null); setPortfolioLoading(false); return }
       if (res.status === 404) { setPortfolio(null); setPortfolioLoading(false); return }
       if (!res.ok) throw new Error('Portföy yüklenemedi')
       const data: SimulationPortfolioSummary = await res.json()
@@ -507,7 +523,7 @@ export default function SimulationPage() {
   const fetchTransactions = useCallback(async () => {
     try {
       setTxLoading(true)
-      const res = await fetch(`${BASE_URL}/api/simulation/transactions`)
+      const res = await fetch(`${BASE_URL}/api/simulation/transactions`, { headers: authHeaders() })
       if (!res.ok) return
       const data: { transactions: VirtualTransaction[] } = await res.json()
       setTransactions(data.transactions)
@@ -533,7 +549,8 @@ export default function SimulationPage() {
       setImpactLoading(true)
       setImpact(null)
       const res = await fetch(
-        `${BASE_URL}/api/simulation/assets/${symbol}/impact?amount=${amount}&trade_type=${tradeType}`
+        `${BASE_URL}/api/simulation/assets/${symbol}/impact?amount=${amount}&trade_type=${tradeType}`,
+        { headers: authHeaders() }
       )
       if (!res.ok) return
       const data: AssetImpactAnalysis = await res.json()
@@ -635,7 +652,7 @@ export default function SimulationPage() {
     try {
       const res = await fetch(`${BASE_URL}/api/simulation/create`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ initial_balance: balance, mode: setupMode }),
       })
       if (!res.ok) {
@@ -721,7 +738,7 @@ export default function SimulationPage() {
           : { symbol: selectedAsset.symbol, quantity: qty, price: selectedAsset.price }
       const res = await fetch(`${BASE_URL}${endpoint}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify(body),
       })
       if (!res.ok) {
@@ -749,7 +766,7 @@ export default function SimulationPage() {
     try {
       const res = await fetch(`${BASE_URL}/api/simulation/ai/select-strategy`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({
           strategy_id: strategyId,
           custom_allocation: customAllocation || undefined
