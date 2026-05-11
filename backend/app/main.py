@@ -3,7 +3,7 @@ import json
 import logging
 import logging.config
 from datetime import datetime, timezone
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from app.config import settings
@@ -30,9 +30,7 @@ logging.config.dictConfig({
         "handlers": ["console"],
     },
     "loggers": {
-        # Uygulama logları — DEBUG seviyesine indirildi (detaylı takip için)
         "app": {"level": "DEBUG", "propagate": True},
-        # Harici kütüphanelerin gürültüsünü kıs
         "httpx":         {"level": "WARNING", "propagate": True},
         "httpcore":      {"level": "WARNING", "propagate": True},
         "google":        {"level": "WARNING", "propagate": True},
@@ -74,6 +72,7 @@ from app.agents import (
 from app.agents.asset_impact_agent import _rule_based_impact
 from app.services.scenario_service import build_simulation_portfolio
 from app.services.gemini_service import generate_assistant_analysis
+from app.routers.auth import router as auth_router, get_current_user
 
 app = FastAPI(
     title="Piyasa Nabzı AI",
@@ -89,6 +88,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Auth router ────────────────────────────────────────────────────────────────
+app.include_router(auth_router)
+
+
+# ── Veritabanı başlatma ────────────────────────────────────────────────────────
+@app.on_event("startup")
+async def startup_event():
+    from app.database import init_db
+    init_db()
+    logger.info("[startup] Veritabanı hazır.")
+
+
 AGENT_FLOW = [
     "Kullanıcı Hedefi Ayrıştırıldı",
     "Gerçek Zamanlı Piyasa Verisi Çekildi",
@@ -101,15 +112,11 @@ AGENT_FLOW = [
 def _build_assistant_analysis(raw: dict) -> AssistantAnalysis:
     logger.info("[main:assistant] AssistantAnalysis olusturuluyor — anahtarlar: %s", list(raw.keys()))
 
-    # ── Yardimci donusturuculer — Gemini alan adi tutarsizliklarini tolere eder ──
-
     def _to_allocation(a: dict) -> AllocationItem:
-        """Gemini 'percent' veya 'percentage' dondürebilir."""
         pct = a.get("percent") or a.get("percentage") or 0
         return AllocationItem(asset=str(a.get("asset", "")), percent=int(pct))
 
     def _to_affected_asset(a: dict) -> AffectedAsset:
-        """Gemini camelCase (possibleEffect) veya snake_case (possible_effect) dondürebilir."""
         return AffectedAsset(
             asset=str(a.get("asset", "")),
             possibleEffect=str(a.get("possibleEffect") or a.get("possible_effect") or ""),
@@ -118,7 +125,6 @@ def _build_assistant_analysis(raw: dict) -> AssistantAnalysis:
         )
 
     def _to_action_option(o: dict) -> ActionableOption:
-        """Gemini camelCase veya snake_case dondürebilir."""
         return ActionableOption(
             title=str(o.get("title", "")),
             description=str(o.get("description", "")),
@@ -245,8 +251,6 @@ async def get_news_signals():
 @app.get("/api/market-calendar")
 async def get_market_calendar():
     """Statik piyasa takvimi ve hatırlatıcılar."""
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc)
     events = [
         {"id": "evt-001", "title": "TCMB Para Politikası Kurulu Toplantısı", "date": "2026-06-19", "time": "14:00", "event_type": "merkez_bankasi", "importance": "yüksek", "affected_assets": ["USD/TRY", "BIST 100", "Altın"], "description": "Türkiye Cumhuriyet Merkez Bankası politika faizi kararı açıklanacak."},
         {"id": "evt-002", "title": "TÜFE Enflasyon Verisi", "date": "2026-06-03", "time": "10:00", "event_type": "ekonomik", "importance": "yüksek", "affected_assets": ["USD/TRY", "BIST 100"], "description": "Mayıs ayı tüketici fiyat endeksi açıklanacak."},
@@ -262,23 +266,30 @@ async def get_market_calendar():
     return {"events": events, "count": len(events)}
 
 
-# ── Simulation endpoints ───────────────────────────────────────────────────────
+# ── Simulation endpoints (auth gerekli) ───────────────────────────────────────
 
 @app.post("/api/simulation/create")
-async def simulation_create(req: SimulationCreateRequest):
+async def simulation_create(
+    req: SimulationCreateRequest,
+    current_user: dict = Depends(get_current_user),
+):
     try:
         from app.services.simulation_service import create_account
-        account = create_account(req.initial_balance, req.mode, req.currency)
+        user_id = current_user["sub"]
+        account = create_account(user_id, req.initial_balance, req.mode, req.currency)
         return account.model_dump()
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.get("/api/simulation/portfolio")
-async def simulation_portfolio():
+async def simulation_portfolio(
+    current_user: dict = Depends(get_current_user),
+):
     try:
         from app.services.simulation_service import get_account
-        account = get_account()
+        user_id = current_user["sub"]
+        account = get_account(user_id)
         if account is None:
             return {"account": None}
         return account.model_dump()
@@ -287,10 +298,14 @@ async def simulation_portfolio():
 
 
 @app.post("/api/simulation/manual/buy")
-async def simulation_buy(req: SimulationBuyRequest):
+async def simulation_buy(
+    req: SimulationBuyRequest,
+    current_user: dict = Depends(get_current_user),
+):
     try:
         from app.services.simulation_service import buy
-        result = buy(req.symbol, req.name, req.quantity, req.price)
+        user_id = current_user["sub"]
+        result = buy(user_id, req.symbol, req.name, req.quantity, req.price)
         return {"success": True, **result}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -299,10 +314,14 @@ async def simulation_buy(req: SimulationBuyRequest):
 
 
 @app.post("/api/simulation/manual/sell")
-async def simulation_sell(req: SimulationSellRequest):
+async def simulation_sell(
+    req: SimulationSellRequest,
+    current_user: dict = Depends(get_current_user),
+):
     try:
         from app.services.simulation_service import sell
-        result = sell(req.symbol, req.quantity, req.price)
+        user_id = current_user["sub"]
+        result = sell(user_id, req.symbol, req.quantity, req.price)
         return {"success": True, **result}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -311,20 +330,27 @@ async def simulation_sell(req: SimulationSellRequest):
 
 
 @app.get("/api/simulation/transactions")
-async def simulation_transactions():
+async def simulation_transactions(
+    current_user: dict = Depends(get_current_user),
+):
     try:
         from app.services.simulation_service import get_transactions
-        txs = get_transactions()
+        user_id = current_user["sub"]
+        txs = get_transactions(user_id)
         return {"transactions": [t.model_dump() for t in txs], "count": len(txs)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/simulation/performance")
-async def simulation_performance(range: str = Query("1d", regex="^(1d|1w|1m)$")):
+async def simulation_performance(
+    range: str = Query("1d", regex="^(1d|1w|1m)$"),
+    current_user: dict = Depends(get_current_user),
+):
     try:
         from app.services.simulation_service import get_performance
-        perf = get_performance(range)
+        user_id = current_user["sub"]
+        perf = await get_performance(user_id, range)
         return perf.model_dump()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -341,18 +367,20 @@ async def simulation_ai_strategies():
 
 
 @app.post("/api/simulation/ai/select-strategy")
-async def simulation_select_strategy(req: SimulationStrategySelectRequest):
+async def simulation_select_strategy(
+    req: SimulationStrategySelectRequest,
+    current_user: dict = Depends(get_current_user),
+):
     try:
         from app.services.simulation_service import select_strategy
-        result = select_strategy(req.strategy_id, req.custom_allocation)
+        user_id = current_user["sub"]
+        result = select_strategy(user_id, req.strategy_id, req.custom_allocation)
         return {"success": True, **result}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# ── Yeni Paper Trading endpoints ───────────────────────────────────────────────
 
 @app.get("/api/simulation/assets")
 async def simulation_assets():
@@ -370,14 +398,13 @@ async def simulation_asset_impact(
     symbol: str,
     amount: float = Query(10000.0, gt=0, description="İşlem tutarı (TL)"),
     trade_type: str = Query("buy", regex="^(buy|sell)$", description="İşlem tipi"),
+    current_user: dict = Depends(get_current_user),
 ):
-    """
-    Seçilen varlığın portföye, riske ve senaryolara etkisini analiz et.
-    İşlem gerçekleşmeden önce kullanıcıya gösterilir (pre-trade analiz).
-    """
+    """Seçilen varlığın portföye etkisini analiz et (pre-trade)."""
     try:
         from app.services.simulation_service import get_asset_impact
-        impact = await get_asset_impact(symbol.upper(), amount, trade_type)
+        user_id = current_user["sub"]
+        impact = await get_asset_impact(user_id, symbol.upper(), amount, trade_type)
         if impact is None:
             raise HTTPException(status_code=404, detail=f"Varlık bulunamadı: {symbol}")
         return impact.model_dump()
@@ -388,11 +415,14 @@ async def simulation_asset_impact(
 
 
 @app.get("/api/simulation/portfolio/summary")
-async def simulation_portfolio_summary():
+async def simulation_portfolio_summary(
+    current_user: dict = Depends(get_current_user),
+):
     """Mevcut simülasyon portföyünün detaylı özetini ve performansını getirir."""
     try:
         from app.services.simulation_service import get_portfolio_summary
-        summary = await get_portfolio_summary()
+        user_id = current_user["sub"]
+        summary = await get_portfolio_summary(user_id)
         if not summary:
             raise HTTPException(status_code=404, detail="Aktif simülasyon hesabı bulunamadı.")
         return summary.model_dump()
@@ -406,10 +436,6 @@ async def simulation_portfolio_summary():
 
 @app.post("/api/assistant/ask")
 async def assistant_ask(req: AssistantAskRequest):
-    """
-    Minimal AI Asistan endpoint'i.
-    Sadece soru + piyasa snapshot + haber başlıkları → Gemini analiz.
-    """
     try:
         market_data = await market_data_agent.run()
         news_signals = await geopolitical_news_agent.run(quick=True)
@@ -422,7 +448,6 @@ async def assistant_ask(req: AssistantAskRequest):
         }
         news_headlines = [s.tr_title or s.title for s in news_signals if s.tr_title or s.title]
 
-        # Soruyla ilgili haberleri filtrele
         question_lower = req.question.lower()
         related_news = [
             s for s in news_signals
@@ -457,11 +482,6 @@ async def get_interest_rates(
     price: int = 100000,
     month: int = 12,
 ):
-    """
-    Banka bazlı kredi faiz oranları (ihtiyaç, konut, taşıt).
-    - price: kredi tutarı (TL), varsayılan 100.000
-    - month: vade (ay), varsayılan 12
-    """
     try:
         from app.services.collect_credit_service import get_credit_rates
         raw = await get_credit_rates(price=price, month=month)
@@ -489,7 +509,6 @@ async def full_analysis_stream(request: FullAnalysisRequest):
         logger.info("[stream] Mesaj: '%s'", request.message[:80])
 
         try:
-            # Round 1 — tüm bağımsız görevleri aynı anda başlat
             goal_task    = asyncio.ensure_future(user_goal_agent.run(request.message))
             market_task  = asyncio.ensure_future(market_data_agent.run())
             news_task    = asyncio.ensure_future(geopolitical_news_agent.run(quick=True))
@@ -516,7 +535,6 @@ async def full_analysis_stream(request: FullAnalysisRequest):
 
             yield _sse("step", {"step": "AI finansal analiz uretiliyor..."})
 
-            # Round 2 — AI analiz
             market_snapshot = {
                 "btc_try":  market_data.bitcoin.price,
                 "gold_try": market_data.gold.price,
@@ -545,7 +563,6 @@ async def full_analysis_stream(request: FullAnalysisRequest):
             )
             yield _sse("assistant_analysis", assistant_analysis.model_dump())
 
-            # Rule-based (senkron, anlık)
             impacts  = _rule_based_impact(news_signals, goal.parsed_goal.assets)
             portfolio = build_simulation_portfolio(
                 capital=goal.parsed_goal.capital,
@@ -591,7 +608,7 @@ async def full_analysis(request: FullAnalysisRequest):
         goal, market_data, news_signals = await asyncio.gather(
             user_goal_agent.run(request.message),
             market_data_agent.run(),
-            geopolitical_news_agent.run(quick=True),  # DeepL/Gemini beklemez
+            geopolitical_news_agent.run(quick=True),
         )
 
         market_snapshot = {

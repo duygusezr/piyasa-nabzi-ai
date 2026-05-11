@@ -1,7 +1,7 @@
 """
 Sanal Portföy Simülasyon Servisi — Paper Trading
 Gerçek para / gerçek emir yoktur. Tüm veriler simülasyon amaçlıdır.
-Process restart'ta sıfırlanır (tasarım gereği — in-memory).
+Kullanıcı başına izole hesap + SQLite kalıcılığı.
 """
 import uuid
 import asyncio
@@ -19,9 +19,60 @@ from app.models.schemas import (
 
 logger = logging.getLogger(__name__)
 
-# ── In-memory state ────────────────────────────────────────────────────────────
-_account: Optional[SimulationAccount] = None
-_transactions: list[VirtualTransaction] = []
+# ── Per-user in-memory cache (DB'den yüklenir, DB'ye kaydedilir) ─────────────
+_accounts: dict[str, Optional[SimulationAccount]] = {}
+_txs:      dict[str, list[VirtualTransaction]]    = {}
+
+
+def _load_from_db(user_id: str) -> None:
+    """Kullanıcı verisini DB'den belleğe yükle."""
+    from app.database import db_load_account, db_load_transactions
+    data = db_load_account(user_id)
+    if data:
+        try:
+            _accounts[user_id] = SimulationAccount(**data)
+        except Exception as e:
+            logger.warning("[sim] DB hesap yüklenemedi (%s): %s", user_id, e)
+            _accounts[user_id] = None
+    else:
+        _accounts[user_id] = None
+
+    tx_rows = db_load_transactions(user_id)
+    loaded_txs: list[VirtualTransaction] = []
+    for row in tx_rows:
+        try:
+            loaded_txs.append(VirtualTransaction(**{k: v for k, v in row.items() if k != "user_id"}))
+        except Exception:
+            pass
+    _txs[user_id] = loaded_txs
+
+
+def _save_to_db(user_id: str) -> None:
+    """Bellekteki hesabı DB'ye kaydet."""
+    from app.database import db_save_account
+    acc = _accounts.get(user_id)
+    if acc:
+        db_save_account(user_id, acc.model_dump(), _now_iso())
+
+
+def _save_tx_to_db(user_id: str, tx: VirtualTransaction) -> None:
+    """Tek bir işlemi DB'ye kaydet."""
+    from app.database import db_insert_transaction
+    db_insert_transaction(user_id, tx.model_dump())
+
+
+def _get_acc(user_id: str) -> Optional[SimulationAccount]:
+    """Kullanıcı hesabını döndür — yoksa DB'den yükle."""
+    if user_id not in _accounts:
+        _load_from_db(user_id)
+    return _accounts.get(user_id)
+
+
+def _get_txs_list(user_id: str) -> list[VirtualTransaction]:
+    """Kullanıcı işlem listesini döndür — yoksa DB'den yükle."""
+    if user_id not in _txs:
+        _load_from_db(user_id)
+    return _txs.get(user_id, [])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -88,11 +139,6 @@ async def _sync_live_prices() -> None:
             if asset.price and asset.price > 0 and not asset.is_mock:
                 live[asset.symbol] = asset.price
 
-        # Kripto — Binance'dan TRY karşılığı doğrudan geliyor
-        # BTC, ETH, BNB, SOL → sembol eşleştirmesi zaten yapılmış
-        # BIST hisseleri — Yahoo Finance'dan geliyor
-        # XAU (gram altın) — PAXG/Binance veya TCMB
-
         updated = 0
         for asset_def in _SIMULATION_ASSETS:
             sym = asset_def["symbol"]
@@ -100,7 +146,6 @@ async def _sync_live_prices() -> None:
                 old_price = asset_def["price"]
                 new_price = live[sym]
                 asset_def["price"] = new_price
-                # change_pct güncelle
                 if old_price and old_price > 0:
                     asset_def["change_pct"] = round((new_price - old_price) / old_price * 100, 4)
                 updated += 1
@@ -110,7 +155,6 @@ async def _sync_live_prices() -> None:
             (a.price for a in market.assets if a.symbol == "XAUUSD" and not a.is_mock), None
         )
         if xauusd_live and xauusd_live > 0:
-            _ASSETS_BY_SYMBOL.get("XAUUSD", {})  # var mı kontrol et
             xauusd_def = _ASSETS_BY_SYMBOL.get("XAUUSD")
             if xauusd_def:
                 xauusd_def["price"] = xauusd_live
@@ -343,27 +387,19 @@ def _get_asset_meta(symbol: str) -> Optional[dict]:
 
 
 def _compute_risk_score(positions: list[VirtualPosition], total_value: float) -> int:
-    """
-    Portföy risk skoru hesapla (1-100).
-    Her pozisyonun volatilite skoru × portföy ağırlığı ağırlıklı ortalaması.
-    """
     if not positions or total_value <= 0:
         return 10
-
     weighted_vol = 0.0
     for pos in positions:
         meta = _get_asset_meta(pos.symbol)
         vol = meta["volatility_score"] if meta else 5
         weight = pos.market_value / total_value
         weighted_vol += vol * weight
-
-    # 1-10 aralığındaki vol_score'u 1-100 aralığına dönüştür
     score = int(weighted_vol * 10)
     return max(1, min(100, score))
 
 
 def _compute_volatility_score(positions: list[VirtualPosition], total_value: float) -> float:
-    """Portföy ağırlıklı ortalama volatilite skoru (1-10)."""
     if not positions or total_value <= 0:
         return 1.0
     weighted = sum(
@@ -446,7 +482,7 @@ async def get_asset(symbol: str) -> Optional[SimulationAsset]:
     )
 
 
-async def get_asset_impact(symbol: str, amount: float, trade_type: str = "buy") -> Optional[AssetImpactAnalysis]:
+async def get_asset_impact(user_id: str, symbol: str, amount: float, trade_type: str = "buy") -> Optional[AssetImpactAnalysis]:
     """
     Seçilen varlığın portföye, riske ve senaryolara etkisini hesapla.
     İşlem gerçekleşmeden önce kullanıcıya gösterilir (pre-trade analysis).
@@ -456,28 +492,24 @@ async def get_asset_impact(symbol: str, amount: float, trade_type: str = "buy") 
     if not meta:
         return None
 
-    # Mevcut portföy durumu
-    acc = _account
+    acc = _get_acc(user_id)
     positions = acc.positions if acc else []
     cash      = acc.cash_balance if acc else amount
 
-    # Mevcut pozisyon değerlerini hesapla
     positions_value = sum(
         (p.quantity * (_get_asset_meta(p.symbol) or {}).get("price", p.current_price))
         for p in positions
     )
     total_value = cash + positions_value if acc else amount
 
-    # Mevcut sembol ağırlığı
     current_pos_value = next(
         (p.quantity * meta["price"] for p in positions if p.symbol == symbol), 0.0
     )
     weight_before = (current_pos_value / total_value * 100) if total_value > 0 else 0.0
 
-    # İşlem sonrası ağırlık
     if trade_type == "buy":
         new_pos_value = current_pos_value + amount
-        new_total     = total_value  # nakit azalır, varlık artar — net aynı
+        new_total     = total_value
         cash_after    = cash - amount
     else:
         sell_value    = min(amount, current_pos_value)
@@ -487,13 +519,11 @@ async def get_asset_impact(symbol: str, amount: float, trade_type: str = "buy") 
 
     weight_after = (new_pos_value / new_total * 100) if new_total > 0 else 0.0
 
-    # Risk skor hesabı (basit model)
     vol = meta["volatility_score"]
     risk_before = _compute_risk_score(
         _enrich_positions(positions, positions_value + cash), total_value
     ) if acc else 10
 
-    # İşlem sonrası tahmini risk (yeni ağırlık × vol ekler/azaltır)
     delta_weight = (weight_after - weight_before) / 100.0
     risk_after = int(min(100, max(1, risk_before + delta_weight * vol * 10)))
 
@@ -505,7 +535,6 @@ async def get_asset_impact(symbol: str, amount: float, trade_type: str = "buy") 
     concentration_risk = weight_after > 30.0
     max_daily_swing    = round(vol * 1.2, 1)
 
-    # Uyarılar
     warnings: list[str] = []
     if vol >= 8:
         warnings.append(f"{meta['name']} yüksek volatilite taşıyor — kısa vadeli sert dalgalanmalar görülebilir.")
@@ -546,17 +575,17 @@ async def get_asset_impact(symbol: str, amount: float, trade_type: str = "buy") 
     )
 
 
-async def get_portfolio_summary() -> Optional[SimulationPortfolioSummary]:
+async def get_portfolio_summary(user_id: str) -> Optional[SimulationPortfolioSummary]:
     """Kapsamlı portföy özeti döndür (tüm hesap + performans + risk)."""
-    if _account is None:
+    acc = _get_acc(user_id)
+    if acc is None:
         return None
 
     await _sync_live_prices()
-    
-    cash = _account.cash_balance
-    raw_positions = _account.positions
 
-    # Güncel fiyatlarla piyasa değerlerini hesapla
+    cash = acc.cash_balance
+    raw_positions = acc.positions
+
     positions_value = sum(
         p.quantity * (_get_asset_meta(p.symbol) or {}).get("price", p.current_price)
         for p in raw_positions
@@ -567,11 +596,9 @@ async def get_portfolio_summary() -> Optional[SimulationPortfolioSummary]:
     risk_score  = _compute_risk_score(positions, total_value)
     vol_score   = _compute_volatility_score(positions, total_value)
 
-    # P/L hesapları (basit simülasyon modeli — gerçek tarihsel veri yoktur)
     total_cost = sum(p.quantity * p.avg_cost for p in raw_positions)
     total_gain = positions_value - total_cost
 
-    # Günlük: pozisyon change_pct ortalaması (ağırlıklı)
     if positions and total_value > 0:
         daily_pnl = sum(
             (_get_asset_meta(p.symbol) or {}).get("change_pct", 0) / 100 * p.market_value
@@ -581,17 +608,17 @@ async def get_portfolio_summary() -> Optional[SimulationPortfolioSummary]:
         daily_pnl = 0.0
 
     daily_pnl_pct  = (daily_pnl / total_value * 100) if total_value > 0 else 0.0
-    weekly_pnl     = daily_pnl * 5        # simülasyon tahmini
+    weekly_pnl     = daily_pnl * 5
     weekly_pnl_pct = daily_pnl_pct * 5
     monthly_pnl    = daily_pnl * 22
     monthly_pnl_pct= daily_pnl_pct * 22
 
-    total_return     = total_value - _account.initial_balance
-    total_return_pct = (total_return / _account.initial_balance * 100) if _account.initial_balance > 0 else 0.0
+    total_return     = total_value - acc.initial_balance
+    total_return_pct = (total_return / acc.initial_balance * 100) if acc.initial_balance > 0 else 0.0
 
     return SimulationPortfolioSummary(
-        account_id=_account.id,
-        initial_balance=_account.initial_balance,
+        account_id=acc.id,
+        initial_balance=acc.initial_balance,
         cash_balance=round(cash, 2),
         total_portfolio_value=round(total_value, 2),
         positions_value=round(positions_value, 2),
@@ -606,23 +633,23 @@ async def get_portfolio_summary() -> Optional[SimulationPortfolioSummary]:
         total_return_pct=round(total_return_pct, 4),
         risk_score=risk_score,
         volatility_score=vol_score,
-        mode=_account.mode,
-        active_strategy=_account.active_strategy,
-        last_strategy_change=_account.last_strategy_change,
-        created_at=_account.created_at,
+        mode=acc.mode,
+        active_strategy=acc.active_strategy,
+        last_strategy_change=acc.last_strategy_change,
+        created_at=acc.created_at,
     )
 
 
-def get_account() -> Optional[SimulationAccount]:
-    """Ham hesap verisini döndür (geriye dönük uyumluluk için)."""
-    return _account
+def get_account(user_id: str) -> Optional[SimulationAccount]:
+    """Ham hesap verisini döndür."""
+    return _get_acc(user_id)
 
 
-def create_account(initial_balance: float, mode: str = "manual", currency: str = "TRY") -> SimulationAccount:
-    """Yeni sanal hesap oluştur."""
-    global _account, _transactions
-    _account = SimulationAccount(
-        id="default",
+def create_account(user_id: str, initial_balance: float, mode: str = "manual", currency: str = "TRY") -> SimulationAccount:
+    """Yeni sanal hesap oluştur (varsa üzerine yaz)."""
+    from app.database import db_delete_account
+    acc = SimulationAccount(
+        id=user_id,
         initial_balance=initial_balance,
         cash_balance=initial_balance,
         currency=currency,
@@ -630,39 +657,40 @@ def create_account(initial_balance: float, mode: str = "manual", currency: str =
         positions=[],
         created_at=_now_iso(),
     )
-    _transactions = []
-    logger.info("[simulation] Yeni hesap oluşturuldu: %.0f TL | mod: %s", initial_balance, mode)
-    return _account
+    _accounts[user_id] = acc
+    _txs[user_id] = []
+    db_delete_account(user_id)
+    _save_to_db(user_id)
+    logger.info("[simulation] Yeni hesap oluşturuldu: user=%s %.0f TL | mod: %s", user_id, initial_balance, mode)
+    return acc
 
 
-def buy(symbol: str, name: str, quantity: float, price: float) -> dict:
+def buy(user_id: str, symbol: str, name: str, quantity: float, price: float) -> dict:
     """Sanal alım işlemi yap."""
-    global _account, _transactions
-
-    if _account is None:
+    acc = _get_acc(user_id)
+    if acc is None:
         raise ValueError("Önce bir simülasyon hesabı oluşturun.")
 
     total = quantity * price
-    if total > _account.cash_balance:
-        raise ValueError(f"Yetersiz sanal bakiye. Mevcut: {_account.cash_balance:.2f} TL, Gerekli: {total:.2f} TL")
+    if total > acc.cash_balance:
+        raise ValueError(f"Yetersiz sanal bakiye. Mevcut: {acc.cash_balance:.2f} TL, Gerekli: {total:.2f} TL")
 
     meta = _get_asset_meta(symbol)
 
-    # Pozisyonu güncelle veya oluştur
-    existing = next((p for p in _account.positions if p.symbol == symbol), None)
+    existing = next((p for p in acc.positions if p.symbol == symbol), None)
     if existing:
         new_qty       = existing.quantity + quantity
         new_avg_cost  = (existing.quantity * existing.avg_cost + total) / new_qty
-        existing.quantity  = new_qty
-        existing.avg_cost  = new_avg_cost
+        existing.quantity      = new_qty
+        existing.avg_cost      = new_avg_cost
         existing.current_price = price
         existing.market_value  = new_qty * price
         if meta:
-            existing.category        = meta["category"]
-            existing.risk_level      = meta["risk_level"]
-            existing.news_sensitivity= meta["news_sensitivity"]
+            existing.category         = meta["category"]
+            existing.risk_level       = meta["risk_level"]
+            existing.news_sensitivity = meta["news_sensitivity"]
     else:
-        _account.positions.append(VirtualPosition(
+        acc.positions.append(VirtualPosition(
             symbol=symbol,
             name=name,
             quantity=quantity,
@@ -676,7 +704,7 @@ def buy(symbol: str, name: str, quantity: float, price: float) -> dict:
             news_sensitivity=meta["news_sensitivity"] if meta else "medium",
         ))
 
-    _account.cash_balance -= total
+    acc.cash_balance -= total
 
     tx = VirtualTransaction(
         id=str(uuid.uuid4())[:8],
@@ -688,35 +716,37 @@ def buy(symbol: str, name: str, quantity: float, price: float) -> dict:
         price=price,
         total=total,
     )
-    _transactions.append(tx)
-    logger.info("[simulation] ALIŞ: %s × %.4f @ %.2f = %.2f TL", symbol, quantity, price, total)
+    _get_txs_list(user_id).insert(0, tx)  # en yeni başa
+    _save_to_db(user_id)
+    _save_tx_to_db(user_id, tx)
+
+    logger.info("[simulation] ALIŞ: user=%s %s × %.4f @ %.2f = %.2f TL", user_id, symbol, quantity, price, total)
     return {"status": "ok", "transaction": tx.model_dump()}
 
 
-def sell(symbol: str, quantity: float, price: float) -> dict:
+def sell(user_id: str, symbol: str, quantity: float, price: float) -> dict:
     """Sanal satış işlemi yap."""
-    global _account, _transactions
-
-    if _account is None:
+    acc = _get_acc(user_id)
+    if acc is None:
         raise ValueError("Önce bir simülasyon hesabı oluşturun.")
 
-    pos = next((p for p in _account.positions if p.symbol == symbol), None)
+    pos = next((p for p in acc.positions if p.symbol == symbol), None)
     if not pos:
         raise ValueError(f"Portföyde {symbol} bulunamadı.")
     if quantity > pos.quantity:
         raise ValueError(f"Yetersiz pozisyon: {pos.quantity:.4f} adet mevcut, {quantity:.4f} satılmak isteniyor.")
 
-    total    = quantity * price
-    pnl      = (price - pos.avg_cost) * quantity
+    total = quantity * price
+    pnl   = (price - pos.avg_cost) * quantity
 
     pos.quantity      -= quantity
     pos.current_price  = price
     pos.market_value   = pos.quantity * price
 
     if pos.quantity <= 1e-9:
-        _account.positions = [p for p in _account.positions if p.symbol != symbol]
+        acc.positions = [p for p in acc.positions if p.symbol != symbol]
 
-    _account.cash_balance += total
+    acc.cash_balance += total
 
     tx = VirtualTransaction(
         id=str(uuid.uuid4())[:8],
@@ -728,22 +758,25 @@ def sell(symbol: str, quantity: float, price: float) -> dict:
         price=price,
         total=total,
     )
-    _transactions.append(tx)
+    _get_txs_list(user_id).insert(0, tx)
+    _save_to_db(user_id)
+    _save_tx_to_db(user_id, tx)
+
     logger.info(
-        "[simulation] SATIŞ: %s × %.4f @ %.2f = %.2f TL | K/Z: %.2f TL",
-        symbol, quantity, price, total, pnl,
+        "[simulation] SATIŞ: user=%s %s × %.4f @ %.2f = %.2f TL | K/Z: %.2f TL",
+        user_id, symbol, quantity, price, total, pnl,
     )
     return {"status": "ok", "transaction": tx.model_dump(), "realized_pnl": round(pnl, 2)}
 
 
-def get_transactions() -> list[VirtualTransaction]:
+def get_transactions(user_id: str) -> list[VirtualTransaction]:
     """İşlem geçmişini yeniden olana göre sıralı döndür."""
-    return list(reversed(_transactions))
+    return list(_get_txs_list(user_id))
 
 
-def get_performance(range_key: str = "1d") -> SimulationPerformance:
+async def get_performance(user_id: str, range_key: str = "1d") -> SimulationPerformance:
     """Performans özeti döndür (simülasyon verisi)."""
-    summary = get_portfolio_summary()
+    summary = await get_portfolio_summary(user_id)
     if summary is None:
         return SimulationPerformance(
             range=range_key, initial_value=0, current_value=0, pnl=0, pnl_pct=0
@@ -773,16 +806,15 @@ def get_ai_strategies() -> list[SimulationStrategy]:
     return AI_STRATEGIES
 
 
-def select_strategy(strategy_id: str, custom_allocation: Optional[list[AllocationItem]] = None) -> dict:
-    """Kullanıcı AI stratejisi seçer — günde 1 kez değiştirebilir. Kullanıcı isterse oranları özelleştirebilir."""
-    global _account
-
-    if _account is None:
+def select_strategy(user_id: str, strategy_id: str, custom_allocation: Optional[list[AllocationItem]] = None) -> dict:
+    """Kullanıcı AI stratejisi seçer — günde 1 kez değiştirebilir."""
+    acc = _get_acc(user_id)
+    if acc is None:
         raise ValueError("Önce bir simülasyon hesabı oluşturun.")
 
     # 24 saatte 1 kez değişim kontrolü
-    if _account.last_strategy_change:
-        last = datetime.fromisoformat(_account.last_strategy_change)
+    if acc.last_strategy_change:
+        last = datetime.fromisoformat(acc.last_strategy_change)
         if datetime.now(timezone.utc) - last < timedelta(hours=24):
             remaining = timedelta(hours=24) - (datetime.now(timezone.utc) - last)
             hours = int(remaining.total_seconds() // 3600)
@@ -796,37 +828,33 @@ def select_strategy(strategy_id: str, custom_allocation: Optional[list[Allocatio
     import copy
     strategy_to_use = copy.deepcopy(strategy)
     if custom_allocation:
-        # Toplamın %100 olup olmadığını kontrol et
         total_percent = sum(item.percent for item in custom_allocation)
         if abs(total_percent - 100) > 1:
             raise ValueError(f"Tahsisat oranları toplamı %100 olmalıdır (şu an: %{total_percent})")
         strategy_to_use.allocation = custom_allocation
 
-    _account.active_strategy      = strategy_to_use
-    _account.last_strategy_change = _now_iso()
-    logger.info("[simulation] Strateji seçildi: %s", strategy_to_use.name)
+    acc.active_strategy      = strategy_to_use
+    acc.last_strategy_change = _now_iso()
+    logger.info("[simulation] Strateji seçildi: user=%s strateji=%s", user_id, strategy_to_use.name)
 
-    # ── Strateji tahsisatına göre otomatik sanal alım ─────────────────────────
-    # Soyut varlık adı → gerçek sembol(ler) eşleşmesi
     _STRATEGY_SYMBOL_MAP: dict[str, list[str]] = {
-        # Düşük Risk
-        "TL Nakit / Para Piyasası Fonu": [],              # nakit olarak bırak
+        "TL Nakit / Para Piyasası Fonu": [],
         "Gram Altın":                    ["XAU"],
         "BIST 30":                       ["XU030"],
         "Borçlanma Araçları Fonu":       ["BORCLANMA_FONU"],
-        # Dengeli
         "Altın":                         ["XAU"],
         "BIST Hisseleri":                ["GARAN", "THYAO"],
         "Döviz Bazlı Varlık":            ["XAUUSD"],
         "Kripto":                        ["BTC"],
-        "Nakit":                         [],               # nakit olarak bırak
-        # Agresif
+        "Nakit":                         [],
         "BIST Tema Hisseleri":           ["ASELS", "THYAO", "FROTO"],
         "Fon":                           ["HISSE_FONU"],
     }
 
     executed_trades: list[dict] = []
-    snapshot_cash = _account.cash_balance   # anlık nakit — yüzdeler buna göre hesaplanır
+    snapshot_cash = acc.cash_balance
+
+    txs = _get_txs_list(user_id)
 
     for alloc in strategy_to_use.allocation:
         symbols = _STRATEGY_SYMBOL_MAP.get(alloc.asset, [])
@@ -855,14 +883,14 @@ def select_strategy(strategy_id: str, custom_allocation: Optional[list[Allocatio
             if quantity <= 0:
                 continue
             total = quantity * price
-            if total > _account.cash_balance:
+            if total > acc.cash_balance:
                 logger.warning(
                     "[simulation:strategy] Yetersiz bakiye — %s için %.2f TL gerekli, %.2f TL mevcut",
-                    sym, total, _account.cash_balance
+                    sym, total, acc.cash_balance
                 )
                 continue
 
-            existing = next((p for p in _account.positions if p.symbol == sym), None)
+            existing = next((p for p in acc.positions if p.symbol == sym), None)
             if existing:
                 new_qty      = existing.quantity + quantity
                 new_avg_cost = (existing.quantity * existing.avg_cost + total) / new_qty
@@ -871,7 +899,7 @@ def select_strategy(strategy_id: str, custom_allocation: Optional[list[Allocatio
                 existing.current_price = price
                 existing.market_value  = new_qty * price
             else:
-                _account.positions.append(VirtualPosition(
+                acc.positions.append(VirtualPosition(
                     symbol=sym,
                     name=meta["name"],
                     quantity=quantity,
@@ -885,7 +913,7 @@ def select_strategy(strategy_id: str, custom_allocation: Optional[list[Allocatio
                     news_sensitivity=meta["news_sensitivity"],
                 ))
 
-            _account.cash_balance -= total
+            acc.cash_balance -= total
 
             tx = VirtualTransaction(
                 id=str(uuid.uuid4())[:8],
@@ -897,21 +925,22 @@ def select_strategy(strategy_id: str, custom_allocation: Optional[list[Allocatio
                 price=price,
                 total=total,
             )
-            _transactions.append(tx)
+            txs.insert(0, tx)
+            _save_tx_to_db(user_id, tx)
             executed_trades.append(tx.model_dump())
             logger.info(
-                "[simulation:strategy] OTO-ALIŞ: %s x %.4f @ %.2f = %.2f TL  (strateji: %s)",
-                sym, quantity, price, total, strategy_to_use.name
+                "[simulation:strategy] OTO-ALIŞ: user=%s %s x %.4f @ %.2f = %.2f TL  (strateji: %s)",
+                user_id, sym, quantity, price, total, strategy_to_use.name
             )
 
+    _save_to_db(user_id)
     logger.info(
-        "[simulation:strategy] Strateji uygulandı: %s | %d işlem | kalan nakit: %.2f TL",
-        strategy_to_use.name, len(executed_trades), _account.cash_balance
+        "[simulation:strategy] Strateji uygulandı: user=%s %s | %d işlem | kalan nakit: %.2f TL",
+        user_id, strategy_to_use.name, len(executed_trades), acc.cash_balance
     )
     return {
         "status": "ok",
         "strategy": strategy_to_use.model_dump(),
         "executed_trades": executed_trades,
-        "remaining_cash": round(_account.cash_balance, 2),
+        "remaining_cash": round(acc.cash_balance, 2),
     }
-
