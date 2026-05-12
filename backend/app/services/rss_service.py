@@ -43,16 +43,11 @@ RSS_FEEDS = [
     # ── Tamamen Finans — Filtreye gerek yok ──────────────────────────────────
     {"url": "https://tr.investing.com/rss/news.rss",              "source": "Investing.com TR",  "lang": "tr", "finance_only": True},
     {"url": "https://tr.investing.com/rss/news_301.rss",          "source": "Investing.com TR",  "lang": "tr", "finance_only": True},  # Kripto
-    {"url": "https://tr.investing.com/rss/news_8.rss",            "source": "Investing.com TR",  "lang": "tr", "finance_only": True},  # Emtia
     {"url": "https://tr.investing.com/rss/news_25.rss",           "source": "Investing.com TR",  "lang": "tr", "finance_only": True},  # Döviz/Forex
     {"url": "https://www.bloomberght.com/rss",                    "source": "Bloomberg HT",      "lang": "tr", "finance_only": True},
     {"url": "https://www.ntv.com.tr/ekonomi.rss",                 "source": "NTV Ekonomi",       "lang": "tr", "finance_only": True},
-    {"url": "https://www.aa.com.tr/tr/rss/ekonomi",               "source": "AA Ekonomi",        "lang": "tr", "finance_only": True},
-    {"url": "https://www.trthaber.com/ekonomi.rss",               "source": "TRT Haber",         "lang": "tr", "finance_only": True},
     # ── Dünya Haberleri — Finans filtresi uygulanır ───────────────────────────
     {"url": "https://www.trthaber.com/sondakika.rss",             "source": "TRT Haber",         "lang": "tr", "finance_only": False},
-    {"url": "https://www.trthaber.com/dunya.rss",                 "source": "TRT Haber",         "lang": "tr", "finance_only": False},
-    {"url": "https://www.aa.com.tr/tr/rss/dunya",                 "source": "AA Dünya",          "lang": "tr", "finance_only": False},
     # ── İngilizce — Küresel makro / Fed / emtia (DeepL ile çevrilir) ─────────
     {"url": "https://www.cnbc.com/id/10001147/device/rss/rss.html", "source": "CNBC",            "lang": "en", "finance_only": False},
 ]
@@ -232,7 +227,7 @@ async def _fetch_rss(feed: dict) -> list[dict]:
     finance_only = feed.get("finance_only", False)
 
     try:
-        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
             resp = await client.get(
                 feed["url"],
                 headers={"User-Agent": "Mozilla/5.0 (compatible; PiyasaNabziBot/1.0)"},

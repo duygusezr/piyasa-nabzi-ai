@@ -23,7 +23,11 @@ logger = logging.getLogger(__name__)
 # Finans/ekonomi odaklı tag'ler
 _TAGS = ["economy", "finance", "world"]
 _MAX_PER_TAG = 20   # tag başına maksimum haber (daha fazla → filtreden sonra yeterli kalır)
-_TIMEOUT     = 8.0  # saniye
+_TIMEOUT     = 6.0  # saniye
+
+# 429 back-off — rate limit alınırsa 10 dakika beklenir
+_backoff_until: float = 0.0
+_BACKOFF_SECONDS = 600  # 10 dakika
 
 # CollectAPI'de "economy" tag'i altında gelen ama finans dışı kaynaklar
 # Bu kaynaklardan gelen haberler sıkı finans filtresine tabi tutulur
@@ -45,8 +49,13 @@ def _parse_date(date_str: str | None) -> str:
 
 async def _fetch_tag(tag: str) -> list[dict]:
     """Tek bir tag için CollectAPI'dan haber çeker."""
+    global _backoff_until
     if not settings.COLLECTAPI_KEY:
         return []
+
+    import time as _time
+    if _time.time() < _backoff_until:
+        return []  # back-off süresi dolmadı, çağırma
 
     headers = {
         "content-type":  "application/json",
@@ -61,6 +70,10 @@ async def _fetch_tag(tag: str) -> list[dict]:
                 headers=headers,
                 params=params,
             )
+            if resp.status_code == 429:
+                _backoff_until = _time.time() + _BACKOFF_SECONDS
+                logger.warning("[collectapi] 429 rate limit — %d dakika back-off başlatıldı.", _BACKOFF_SECONDS // 60)
+                return []
             resp.raise_for_status()
             data = resp.json()
     except Exception as exc:
@@ -120,10 +133,15 @@ async def fetch_collect_news() -> list[dict]:
     """
     Tüm tag'leri paralel çeker, tekrarları kaldırır, tarihe göre sıralar.
     Başarılı olursa ~300-600ms içinde Türkçe finansal haber döner.
-    COLLECTAPI_KEY yoksa boş liste döner (RSS fallback devreye girer).
+    COLLECTAPI_KEY yoksa veya back-off süresindeyse boş liste döner.
     """
+    import time as _time
     if not settings.COLLECTAPI_KEY:
         logger.debug("[collectapi] Key tanımlı değil, atlanıyor.")
+        return []
+    if _time.time() < _backoff_until:
+        remaining = int(_backoff_until - _time.time()) // 60
+        logger.debug("[collectapi] Back-off sürüyor (~%d dk kaldı), RSS kullanılıyor.", remaining)
         return []
 
     tasks   = [_fetch_tag(tag) for tag in _TAGS]

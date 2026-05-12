@@ -30,7 +30,7 @@ from app.services.collect_api_service import fetch_collect_news
 # ── TTL Cache: /api/news-signals endpoint'i çok sık çağrıldığında RSS'i tekrar çekme ──
 _rss_cache: list | None = None
 _rss_cache_ts: float = 0.0
-_RSS_TTL = 90  # saniye
+_RSS_TTL = 300  # saniye (5 dakika — CollectAPI rate limit ve Gemini çağrı sayısını azaltır)
 
 # ── Son başarılı çekim hafızası ────────────────────────────────────────────────
 # Herhangi bir API/RSS hatası olduğunda MOCK_NEWS yerine son gerçek veriler döner.
