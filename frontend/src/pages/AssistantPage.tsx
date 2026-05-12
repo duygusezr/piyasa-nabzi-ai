@@ -2,8 +2,9 @@ import { useState } from 'react';
 import {
   Bot, Send, AlertCircle, TrendingUp, TrendingDown, Minus, Loader,
   Wallet, Zap, ChevronDown, ChevronUp, ArrowRightLeft,
+  Target, ShieldAlert, Eye, BarChart2,
 } from 'lucide-react';
-import { AssistantAskResponse, NewsSignal, WhatIfResult, PortfolioContext } from '../types';
+import { AssistantAskResponse, AssistantAnalysis, NewsSignal, WhatIfResult, PortfolioContext } from '../types';
 import { askAssistant } from '../services/api';
 
 const EXAMPLE_QUESTIONS = [
@@ -34,6 +35,87 @@ function Section({ title, children }: { title: string; children: React.ReactNode
     <div className="bg-gray-900 rounded-xl border border-gray-800 p-5">
       <h3 className="text-white font-semibold text-sm mb-3">{title}</h3>
       {children}
+    </div>
+  );
+}
+
+// ── Verdict Card — Net Görüş ──────────────────────────────────────────────────
+function VerdictCard({ answer }: { answer: AssistantAnalysis }) {
+  const { netGorus, kisaVadeBeklenti, guvenSkoru, anaSebep, portfoyEtkisi, izlenecekSeviye } = answer;
+  if (!netGorus && !kisaVadeBeklenti) return null;
+
+  const gorusLower = (netGorus || '').toLowerCase();
+  const beklentiLower = (kisaVadeBeklenti || '').toLowerCase();
+
+  const isPositive = gorusLower.includes('olumlu') && !gorusLower.includes('nötr');
+  const isNegative = gorusLower.includes('olumsuz') || beklentiLower.includes('düşüş');
+  const isNeutral  = !isPositive && !isNegative;
+
+  const borderColor = isPositive ? 'border-green-700/60' : isNegative ? 'border-red-700/60' : 'border-yellow-700/50';
+  const bgColor     = isPositive ? 'bg-green-900/10'    : isNegative ? 'bg-red-900/10'    : 'bg-yellow-900/10';
+  const accentColor = isPositive ? 'text-green-400'     : isNegative ? 'text-red-400'     : 'text-yellow-400';
+  const badgeBg     = isPositive ? 'bg-green-900/40 border-green-700' : isNegative ? 'bg-red-900/40 border-red-700' : 'bg-yellow-900/30 border-yellow-700';
+
+  const scoreColor = guvenSkoru >= 70 ? 'text-green-400' : guvenSkoru >= 45 ? 'text-yellow-400' : 'text-red-400';
+
+  return (
+    <div className={`rounded-xl border ${borderColor} ${bgColor} p-5 space-y-4`}>
+      {/* Başlık satırı */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className={`text-xs font-bold uppercase tracking-wider ${accentColor}`}>Net Görüş</span>
+          <span className={`px-3 py-1 rounded-lg border text-sm font-bold ${badgeBg} ${accentColor}`}>
+            {isPositive ? <TrendingUp className="inline w-3.5 h-3.5 mr-1" /> : isNegative ? <TrendingDown className="inline w-3.5 h-3.5 mr-1" /> : <Minus className="inline w-3.5 h-3.5 mr-1" />}
+            {netGorus}
+          </span>
+          {kisaVadeBeklenti && (
+            <span className="px-2 py-1 rounded bg-gray-800 text-gray-300 text-xs font-medium border border-gray-700">
+              Kısa Vade: {kisaVadeBeklenti}
+            </span>
+          )}
+        </div>
+        {/* Güven skoru */}
+        <div className="flex items-center gap-2">
+          <span className="text-gray-500 text-xs">Güven</span>
+          <div className="w-20 bg-gray-800 rounded-full h-1.5">
+            <div
+              className={`h-1.5 rounded-full transition-all ${isPositive ? 'bg-green-500' : isNegative ? 'bg-red-500' : 'bg-yellow-500'}`}
+              style={{ width: `${Math.min(guvenSkoru, 100)}%` }}
+            />
+          </div>
+          <span className={`text-sm font-bold ${scoreColor}`}>{guvenSkoru}/100</span>
+        </div>
+      </div>
+
+      {/* Ana Sebep */}
+      {anaSebep && (
+        <div className="flex gap-3">
+          <ShieldAlert size={15} className={`${accentColor} shrink-0 mt-0.5`} />
+          <p className="text-gray-200 text-sm leading-relaxed">{anaSebep}</p>
+        </div>
+      )}
+
+      {/* Alt satır — Portföy etkisi + İzlenecek seviye */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+        {portfoyEtkisi && (
+          <div className="bg-gray-900/60 rounded-lg p-3 flex gap-2.5">
+            <BarChart2 size={14} className="text-purple-400 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-gray-500 text-xs mb-0.5 uppercase tracking-wide font-medium">Portföy Etkisi</p>
+              <p className="text-gray-200 text-xs leading-relaxed">{portfoyEtkisi}</p>
+            </div>
+          </div>
+        )}
+        {izlenecekSeviye && (
+          <div className="bg-gray-900/60 rounded-lg p-3 flex gap-2.5">
+            <Eye size={14} className="text-blue-400 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-gray-500 text-xs mb-0.5 uppercase tracking-wide font-medium">İzlenecek Seviye</p>
+              <p className="text-gray-200 text-xs leading-relaxed">{izlenecekSeviye}</p>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -300,6 +382,9 @@ export default function AssistantPage() {
       {/* Yanıt */}
       {answer && !loading && (
         <div className="space-y-4">
+          {/* Net Görüş Kartı — her zaman en üstte */}
+          <VerdictCard answer={answer} />
+
           {/* Portföy Bağlamı */}
           {portfolioCtx && portfolioCtx.positions.length > 0 && (
             <PortfolioContextCard ctx={portfolioCtx} />
@@ -310,11 +395,13 @@ export default function AssistantPage() {
             <WhatIfCard result={whatifResult} />
           )}
 
-          {/* Kısa Cevap */}
+          {/* Detaylı Cevap */}
           {answer.directAnswer && (
-            <div className="bg-blue-900/20 border border-blue-800/50 rounded-xl p-5">
-              <p className="text-blue-300 text-xs font-semibold uppercase tracking-wide mb-2">AI Kararı</p>
-              <p className="text-white leading-relaxed">{answer.directAnswer}</p>
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+              <p className="text-gray-500 text-xs font-semibold uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                <Target size={11} /> Detaylı Değerlendirme
+              </p>
+              <p className="text-gray-200 text-sm leading-relaxed">{answer.directAnswer}</p>
             </div>
           )}
 

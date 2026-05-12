@@ -219,6 +219,14 @@ export interface AssistantScenario {
 }
 
 export interface AssistantAnalysis {
+  // Zorunlu net görüş alanları
+  netGorus: string;
+  kisaVadeBeklenti: string;
+  guvenSkoru: number;
+  anaSebep: string;
+  portfoyEtkisi: string;
+  izlenecekSeviye: string;
+  // Detaylı analiz
   directAnswer: string;
   marketContext: string;
   affectedAssets: AffectedAsset[];

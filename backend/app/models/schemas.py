@@ -159,6 +159,14 @@ class AssistantScenario(BaseModel):
 
 
 class AssistantAnalysis(BaseModel):
+    # ── Zorunlu Net Görüş (her zaman dolu) ───────────────────────────────────
+    netGorus: str = ""          # "Olumlu" | "Olumsuz" | "Nötr" | "Nötr - Hafif Negatif" vb.
+    kisaVadeBeklenti: str = ""  # "Yükseliş" | "Düşüş" | "Yatay" | "Yatay - Hafif Düşüş" vb.
+    guvenSkoru: int = 50        # 0-100
+    anaSebep: str = ""          # Max 2 cümle, somut
+    portfoyEtkisi: str = ""     # Kullanıcının portföyüne özel etki
+    izlenecekSeviye: str = ""   # Kritik fiyat / destek / direnç seviyesi
+    # ── Detaylı analiz ───────────────────────────────────────────────────────
     directAnswer: str = ""
     marketContext: str = ""
     affectedAssets: list[AffectedAsset] = []

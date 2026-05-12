@@ -16,30 +16,35 @@ ZORUNLU KURALLAR:
 - Cevaplarını SADECE geçerli JSON formatında üret, başka hiçbir metin ekleme
 - Türkçe cevap ver"""
 
-ASSISTANT_SYSTEM_PROMPT = """Sen Piyasa Nabzı AI platformunda çalışan profesyonel bir AI Finansal Asistan'sın.
+ASSISTANT_SYSTEM_PROMPT = """Sen Piyasa Nabzı AI platformunda çalışan karar destek sistemisin. Bloomberg terminali gibi konuş: kısa, net, veri odaklı.
 
-GÖREV: Kullanıcının sorusunu analiz ederek güncel piyasa verileri, haber etkisi ve varlık sinyalleri üzerinden yapılandırılmış bir karar destek analizi üret.
+TEMEL KURAL — ÖNCE NET YÖN VER:
+Kullanıcı ne sorarsa sorsun, ilk yapacağın şey soruyla ilgili varlık için net bir görüş belirtmektir.
+- "Yükseliş eğilimi var" / "Düşüş baskısı hâkim" / "Yatay seyir bekleniyor" gibi kesin cümleler kur.
+- Belirsizlik varsa "Nötr" de; ama "neden nötr" olduğunu somut veriyle açıkla.
+- "Değerlendirmek zor", "kesin bir şey söylemek mümkün değil" gibi çıkışlar YASAK.
 
-KESİNLİKLE YASAK — Bu ifadeleri asla tek başına kullanma:
-- "Haberleri takip edin" / "Piyasaları takip edin"
-- "Riskleri değerlendirin"
-- "Uzmana danışın" / "Finans uzmanına başvurun"
-- "Birikimlerinizi dağıtmayı düşünün"
-- "Gelir giderinizi kontrol edin"
-- "Canım", "Arkadaşım", "Dostum" gibi hitaplar
-- "kesin al", "kesin sat", "garanti", "zarar etmez", "fırsatı kaçırma"
-- "sermayen sıfır olduğu için" veya sermayeyi engel olarak gösteren ifadeler
+KESİNLİKLE YASAK:
+- "Haberleri takip edin" / "Riskleri değerlendirin" gibi boş tavsiyeler
+- "Uzmana danışın" ifadesi tek başına
+- "Canım", "Arkadaşım" gibi hitaplar
+- "kesin al", "kesin sat", "garanti", "zarar etmez"
+- Genel makro açıklama yerine spesifik fiyat/seviye yaz
 
-ZORUNLU KURALLAR:
-- Her cevapta somut piyasa bağlamı, etkilenen varlıklar, senaryo yüzdeleri ve riskler OLMALI
-- Senaryo yüzdeleri toplamı 100 olmalı
-- Para miktarı belirtilmemişse "yüzdesel dağılım üzerinden değerlendirme yapılmıştır" ifadesini kullan
-- "değerlendirilebilir", "simüle edilebilir", "incelenebilir", "etkilenebilir", "risk oluşturabilir" gibi güvenli ama faydalı ifadeler kullan
-- Senaryo isimleri: "Koruyucu Senaryo", "Dengeli Senaryo", "Agresif Senaryo"
+ZORUNLU FORMAT — JSON çıktı şu alanları içermeli:
+netGorus        → "Olumlu" | "Olumsuz" | "Nötr" | "Nötr - Hafif Negatif" | "Olumlu - Güçlü" vb.
+kisaVadeBeklenti → "Yükseliş" | "Düşüş" | "Yatay" | "Yatay - Hafif Düşüş" vb.
+guvenSkoru      → 0-100 arası tam sayı (piyasa verisi netse yüksek, belirsizse düşük)
+anaSebep        → Tam olarak 2 cümle. Birinci cümle neden bu görüşü benimsediğini, ikincisi en önemli riski belirtsin.
+portfoyEtkisi   → Kullanıcının portföyü varsa "X pozisyonun Y TL etkilenir" şeklinde, yoksa genel etki
+izlenecekSeviye → Somut fiyat seviyesi, destek veya direnç noktası. Sayı yaz.
 
-TON: Profesyonel, net, ciddi. Finans terminali dili. Laubali değil.
+Senaryo isimleri: "Koruyucu Senaryo", "Dengeli Senaryo", "Agresif Senaryo"
+Senaryo yüzdeleri toplamı 100 olmalı.
 
-ÇIKTI: SADECE geçerli JSON. Başka hiçbir metin, açıklama veya kod bloğu ekleme."""
+TON: Bloomberg terminali. Kısa cümleler. Sayı ve yüzde kullan.
+
+ÇIKTI: SADECE geçerli JSON. Başka hiçbir metin ekleme."""
 
 
 def _get_model():
@@ -236,11 +241,19 @@ def _build_fallback_analysis(user_message: str, market_snapshot: dict, assets: l
     assets_str = ", ".join(assets) if assets else "Bitcoin, Altın, BIST 100"
     logger.info("[gemini:assistant] Fallback analiz döndürülüyor — assets: %s", assets_str)
     return {
+        "netGorus": "Nötr",
+        "kisaVadeBeklenti": "Yatay",
+        "guvenSkoru": 40,
+        "anaSebep": (
+            f"Piyasa verileri analiz edildi: USD/TRY {usd:.2f}, Altın {gold:,.0f} TL, "
+            f"BTC {btc:,.0f} TL, BIST {bist:,.0f}. "
+            f"Güçlü bir yön sinyali tespit edilemedi; mevcut koşullar yatay seyri destekliyor."
+        ),
+        "portfoyEtkisi": "Portföy verisi mevcut değil; genel piyasa koşullarına göre değerlendirme yapılmıştır.",
+        "izlenecekSeviye": f"BTC {btc:,.0f} TL mevcut seviye; USD/TRY {usd:.2f} kur kritik eşik.",
         "directAnswer": (
-            f"Soru analiz edildi. Mevcut piyasa verilerine göre — "
-            f"USD/TRY: {usd:.2f}, Altın: {gold:,.0f} TL, Bitcoin: {btc:,.0f} TL, BIST 100: {bist:,.0f} — "
-            f"ilgili varlıklar ({assets_str}) için üç senaryo üzerinden değerlendirme yapılmıştır. "
-            f"Para miktarı belirtilmediği için yüzdesel dağılım üzerinden analiz oluşturulmuştur."
+            f"Mevcut veriler — USD/TRY: {usd:.2f}, Altın: {gold:,.0f} TL, "
+            f"BTC: {btc:,.0f} TL, BIST: {bist:,.0f} — üç senaryo üzerinden analiz edildi."
         ),
         "marketContext": (
             f"USD/TRY {usd:.2f} seviyesinde seyrediyor. "
@@ -358,16 +371,26 @@ async def generate_assistant_analysis(
 PİYASA: BTC={btc:,.0f}TL Altın={gold:,.0f}TL USD/TRY={usd:.2f} BIST={bist:,.0f} | {capital_note} | Süre:{duration_days}g | Varlıklar:{assets_str}
 {news_block}{portfolio_block}{whatif_block}
 
-JSON formatında karar destek analizi üret. Alanlar:
-- directAnswer: soruya 2-3 cümle doğrudan somut cevap (piyasa verisini kullan; portföy varsa kişiselleştir)
-- marketContext: güncel veriler ve haber akışının soruyla ilişkisi
-- affectedAssets: array, her item → asset/possibleEffect/reason/riskLevel(düşük|orta|yüksek), min 4 item
-- actionableOptions: array, her item → title/description/whenUseful/risk(düşük|orta|yüksek), min 3 item
-- scenarios: 3 item — "Koruyucu Senaryo"/"Dengeli Senaryo"/"Agresif Senaryo", her biri → name/allocation(array of asset+percent, toplam=100)/logic/riskScore(1-10)/opportunityScore(1-10)/volatilityScore(1-10)
-- whatToWatch: string array, min 5 gösterge
-- scenarioInvalidation: string array, min 3 madde
-- risks: string array, min 3 risk
-- conclusion: 1-2 cümle net sonuç
+Aşağıdaki JSON formatında cevap ver. Tüm alanlar ZORUNLUDUR.
+
+BÖLÜM 1 — NET GÖRÜŞ (önce bunları doldur, en önemli kısım):
+- netGorus: "Olumlu" / "Olumsuz" / "Nötr" / "Nötr - Hafif Negatif" / "Olumlu - Güçlü" gibi bileşik değer olabilir
+- kisaVadeBeklenti: "Yükseliş" / "Düşüş" / "Yatay" / "Yatay - Hafif Düşüş" gibi
+- guvenSkoru: 0-100 tam sayı (veri ne kadar netseyse o kadar yüksek)
+- anaSebep: TAM OLARAK 2 cümle — 1. cümle görüşün neden bu olduğu (fiyat veya haber bağla), 2. cümle en kritik risk
+- portfoyEtkisi: portföy varsa hangi pozisyon ne kadar TL etkilenir yaz; yoksa "Portföyde bu varlık bulunmuyor, dolaylı etki..." şeklinde
+- izlenecekSeviye: somut sayı içersin — örn. "BTC 3.500.000 TL desteği kritik, bu kırılırsa..." veya "Direnç: X TL"
+
+BÖLÜM 2 — DETAY (kısa tut, gereksiz uzatma):
+- directAnswer: 1-2 cümle (bölüm 1'i özetler, portföy varsa kişiselleştir){' what-if etkisi de ekle' if whatif_block else ''}
+- marketContext: 1-2 cümle — güncel veriyle direkt bağlantı kur
+- affectedAssets: array, her item → asset/possibleEffect/reason/riskLevel(düşük|orta|yüksek), min 3 item
+- actionableOptions: array, her item → title/description/whenUseful/risk(düşük|orta|yüksek), min 2 item
+- scenarios: 3 item — her biri → name/allocation(asset+percent, toplam=100)/logic/riskScore(1-10)/opportunityScore(1-10)/volatilityScore(1-10)
+- whatToWatch: string array, min 4 somut gösterge (fiyat seviyesi veya veri tarihi yaz)
+- scenarioInvalidation: string array, min 2 madde
+- risks: string array, min 2 risk
+- conclusion: 1 cümle net sonuç
 - disclaimer: "Bu içerik yatırım tavsiyesi değildir; eğitim ve simülasyon amaçlıdır."
 
 SADECE JSON döndür."""
