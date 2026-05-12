@@ -23,6 +23,10 @@ logger = logging.getLogger(__name__)
 _accounts: dict[str, Optional[SimulationAccount]] = {}
 _txs:      dict[str, list[VirtualTransaction]]    = {}
 
+# Snapshot rate limiting — per user, son snapshot zamanı
+_last_snapshot_ts: dict[str, float] = {}
+_SNAPSHOT_MIN_INTERVAL = 300  # saniye (5 dakika)
+
 
 def _load_from_db(user_id: str) -> None:
     """Kullanıcı verisini DB'den belleğe yükle."""
@@ -59,6 +63,25 @@ def _save_tx_to_db(user_id: str, tx: VirtualTransaction) -> None:
     """Tek bir işlemi DB'ye kaydet."""
     from app.database import db_insert_transaction
     db_insert_transaction(user_id, tx.model_dump())
+
+
+def _save_snapshot(user_id: str, force: bool = False) -> None:
+    """Portföy değerini snapshot olarak kaydet. force=True ise rate limit atlanır."""
+    now = time()
+    if not force and now - _last_snapshot_ts.get(user_id, 0.0) < _SNAPSHOT_MIN_INTERVAL:
+        return
+    acc = _accounts.get(user_id)
+    if acc is None:
+        return
+    positions_value = sum(
+        p.quantity * (_get_asset_meta(p.symbol) or {}).get("price", p.current_price)
+        for p in acc.positions
+    )
+    total_value = acc.cash_balance + positions_value
+    from app.database import db_save_snapshot
+    db_save_snapshot(user_id, _now_iso(), total_value, positions_value, acc.cash_balance)
+    _last_snapshot_ts[user_id] = now
+    logger.info("[simulation:snapshot] user=%s total=%.2f TL kaydedildi", user_id, total_value)
 
 
 def _get_acc(user_id: str) -> Optional[SimulationAccount]:
@@ -616,6 +639,27 @@ async def get_portfolio_summary(user_id: str) -> Optional[SimulationPortfolioSum
     total_return     = total_value - acc.initial_balance
     total_return_pct = (total_return / acc.initial_balance * 100) if acc.initial_balance > 0 else 0.0
 
+    # Gerçek snapshot karşılaştırması
+    from app.database import db_load_snapshots
+    now_dt = datetime.now(timezone.utc)
+
+    def _pnl_from_snapshot(days: int) -> tuple[float, float]:
+        since = (now_dt - timedelta(days=days)).isoformat()
+        rows = db_load_snapshots(user_id, since, limit=1)
+        if rows:
+            ref_val = rows[0]["total_value"]
+            diff = total_value - ref_val
+            pct = (diff / ref_val * 100) if ref_val > 0 else 0.0
+            return round(diff, 2), round(pct, 4)
+        return round(daily_pnl, 2), round(daily_pnl_pct, 4)
+
+    real_daily_pnl,   real_daily_pct   = _pnl_from_snapshot(1)
+    real_weekly_pnl,  real_weekly_pct  = _pnl_from_snapshot(7)
+    real_monthly_pnl, real_monthly_pct = _pnl_from_snapshot(30)
+
+    # Pasif snapshot — sayfa her açıldığında 5 dakikada bir kaydeder
+    _save_snapshot(user_id)
+
     return SimulationPortfolioSummary(
         account_id=acc.id,
         initial_balance=acc.initial_balance,
@@ -623,12 +667,12 @@ async def get_portfolio_summary(user_id: str) -> Optional[SimulationPortfolioSum
         total_portfolio_value=round(total_value, 2),
         positions_value=round(positions_value, 2),
         positions=positions,
-        daily_pnl=round(daily_pnl, 2),
-        daily_pnl_pct=round(daily_pnl_pct, 4),
-        weekly_pnl=round(weekly_pnl, 2),
-        weekly_pnl_pct=round(weekly_pnl_pct, 4),
-        monthly_pnl=round(monthly_pnl, 2),
-        monthly_pnl_pct=round(monthly_pnl_pct, 4),
+        daily_pnl=real_daily_pnl,
+        daily_pnl_pct=real_daily_pct,
+        weekly_pnl=real_weekly_pnl,
+        weekly_pnl_pct=real_weekly_pct,
+        monthly_pnl=real_monthly_pnl,
+        monthly_pnl_pct=real_monthly_pct,
         total_return=round(total_return, 2),
         total_return_pct=round(total_return_pct, 4),
         risk_score=risk_score,
@@ -719,6 +763,7 @@ def buy(user_id: str, symbol: str, name: str, quantity: float, price: float) -> 
     _get_txs_list(user_id).insert(0, tx)  # en yeni başa
     _save_to_db(user_id)
     _save_tx_to_db(user_id, tx)
+    _save_snapshot(user_id, force=True)
 
     logger.info("[simulation] ALIŞ: user=%s %s × %.4f @ %.2f = %.2f TL", user_id, symbol, quantity, price, total)
     return {"status": "ok", "transaction": tx.model_dump()}
@@ -761,6 +806,7 @@ def sell(user_id: str, symbol: str, quantity: float, price: float) -> dict:
     _get_txs_list(user_id).insert(0, tx)
     _save_to_db(user_id)
     _save_tx_to_db(user_id, tx)
+    _save_snapshot(user_id, force=True)
 
     logger.info(
         "[simulation] SATIŞ: user=%s %s × %.4f @ %.2f = %.2f TL | K/Z: %.2f TL",
@@ -775,29 +821,51 @@ def get_transactions(user_id: str) -> list[VirtualTransaction]:
 
 
 async def get_performance(user_id: str, range_key: str = "1d") -> SimulationPerformance:
-    """Performans özeti döndür (simülasyon verisi)."""
+    """Gerçek snapshot'lardan performans ve grafik verisi döndür."""
     summary = await get_portfolio_summary(user_id)
     if summary is None:
         return SimulationPerformance(
             range=range_key, initial_value=0, current_value=0, pnl=0, pnl_pct=0
         )
 
-    if range_key == "1w":
-        pnl     = summary.weekly_pnl
-        pnl_pct = summary.weekly_pnl_pct
-    elif range_key == "1m":
-        pnl     = summary.monthly_pnl
-        pnl_pct = summary.monthly_pnl_pct
+    days = {"1d": 1, "1w": 7, "1m": 30}.get(range_key, 1)
+    from app.database import db_load_snapshots
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    rows = db_load_snapshots(user_id, since, limit=200)
+
+    current = summary.total_portfolio_value
+    if rows:
+        initial = rows[0]["total_value"]
     else:
-        pnl     = summary.daily_pnl
-        pnl_pct = summary.daily_pnl_pct
+        initial = summary.initial_balance
+
+    pnl = current - initial
+    pnl_pct = (pnl / initial * 100) if initial > 0 else 0.0
+
+    # chart_data: snapshot'ları N noktaya sıkıştır
+    chart_points = rows + [{"timestamp": _now_iso(), "total_value": current}]
+    max_points = 30
+    step = max(1, len(chart_points) // max_points)
+    sampled = chart_points[::step][-max_points:]
+
+    label_fmt = {
+        "1d": lambda ts: ts[11:16],          # "HH:MM"
+        "1w": lambda ts: ts[5:10],           # "MM-GG"
+        "1m": lambda ts: ts[5:10],
+    }.get(range_key, lambda ts: ts[5:10])
+
+    chart_data = [
+        {"index": i, "value": round(p["total_value"], 2), "label": label_fmt(p["timestamp"])}
+        for i, p in enumerate(sampled)
+    ]
 
     return SimulationPerformance(
         range=range_key,
-        initial_value=summary.initial_balance,
-        current_value=summary.total_portfolio_value,
+        initial_value=round(initial, 2),
+        current_value=round(current, 2),
         pnl=round(pnl, 2),
         pnl_pct=round(pnl_pct, 4),
+        chart_data=chart_data,
     )
 
 
@@ -934,6 +1002,7 @@ def select_strategy(user_id: str, strategy_id: str, custom_allocation: Optional[
             )
 
     _save_to_db(user_id)
+    _save_snapshot(user_id, force=True)
     logger.info(
         "[simulation:strategy] Strateji uygulandı: user=%s %s | %d işlem | kalan nakit: %.2f TL",
         user_id, strategy_to_use.name, len(executed_trades), acc.cash_balance

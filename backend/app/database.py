@@ -61,6 +61,17 @@ def init_db() -> None:
             );
 
             CREATE INDEX IF NOT EXISTS idx_sim_tx_user ON sim_transactions(user_id);
+
+            CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id         TEXT NOT NULL,
+                timestamp       TEXT NOT NULL,
+                total_value     REAL NOT NULL,
+                positions_value REAL NOT NULL,
+                cash_balance    REAL NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_snapshots_user_ts ON portfolio_snapshots(user_id, timestamp);
         """)
     logger.info("[db] Veritabanı hazır: %s", _DB_PATH)
 
@@ -141,6 +152,33 @@ def db_insert_transaction(user_id: str, tx: dict) -> None:
                 tx["price"], tx["total"], tx.get("fee", 0),
             ),
         )
+
+
+def db_save_snapshot(user_id: str, timestamp: str, total_value: float, positions_value: float, cash_balance: float) -> None:
+    with _get_conn() as conn:
+        conn.execute(
+            "INSERT INTO portfolio_snapshots (user_id, timestamp, total_value, positions_value, cash_balance) VALUES (?, ?, ?, ?, ?)",
+            (user_id, timestamp, total_value, positions_value, cash_balance),
+        )
+
+
+def db_load_snapshots(user_id: str, since_iso: str, limit: int = 200) -> list[dict]:
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT timestamp, total_value FROM portfolio_snapshots "
+            "WHERE user_id = ? AND timestamp >= ? ORDER BY timestamp ASC LIMIT ?",
+            (user_id, since_iso, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def db_latest_snapshot_ts(user_id: str) -> Optional[str]:
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT timestamp FROM portfolio_snapshots WHERE user_id = ? ORDER BY timestamp DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+    return row["timestamp"] if row else None
 
 
 def db_load_transactions(user_id: str) -> list[dict]:

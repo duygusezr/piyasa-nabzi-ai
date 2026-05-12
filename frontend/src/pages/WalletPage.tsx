@@ -4,8 +4,11 @@ import {
   Wallet, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight,
   RefreshCw, BarChart2, PieChart, Clock
 } from 'lucide-react';
-import { fetchPortfolioSummary, fetchSimulationTransactions } from '../services/api';
-import type { SimulationPortfolioSummary, VirtualTransaction } from '../types';
+import {
+  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine
+} from 'recharts';
+import { fetchPortfolioSummary, fetchSimulationTransactions, fetchSimulationPerformance } from '../services/api';
+import type { SimulationPortfolioSummary, VirtualTransaction, SimulationPerformance } from '../types';
 
 const CATEGORY_COLORS: Record<string, string> = {
   'Kripto':           'bg-orange-500/20 text-orange-400 border-orange-500/30',
@@ -34,7 +37,9 @@ export default function WalletPage() {
   const navigate = useNavigate();
   const [summary, setSummary] = useState<SimulationPortfolioSummary | null>(null);
   const [txs, setTxs] = useState<VirtualTransaction[]>([]);
+  const [perf, setPerf] = useState<SimulationPerformance | null>(null);
   const [loading, setLoading] = useState(true);
+  const [perfLoading, setPerfLoading] = useState(false);
   const [error, setError] = useState('');
   const [perfTab, setPerfTab] = useState<'1d' | '1w' | '1m'>('1d');
 
@@ -59,7 +64,20 @@ export default function WalletPage() {
     }
   };
 
+  const loadPerf = async (range: '1d' | '1w' | '1m') => {
+    setPerfLoading(true);
+    try {
+      const data = await fetchSimulationPerformance(range);
+      setPerf(data);
+    } catch {
+      setPerf(null);
+    } finally {
+      setPerfLoading(false);
+    }
+  };
+
   useEffect(() => { load(); }, []);
+  useEffect(() => { if (summary) loadPerf(perfTab); }, [perfTab, summary]);
 
   if (loading) {
     return (
@@ -94,9 +112,10 @@ export default function WalletPage() {
     );
   }
 
-  // Performans değerleri
-  const perfPnl = perfTab === '1w' ? summary.weekly_pnl : perfTab === '1m' ? summary.monthly_pnl : summary.daily_pnl;
-  const perfPct = perfTab === '1w' ? summary.weekly_pnl_pct : perfTab === '1m' ? summary.monthly_pnl_pct : summary.daily_pnl_pct;
+  // Performans değerleri (gerçek snapshot'tan gelir, yoksa summary fallback)
+  const perfPnl = perf?.pnl ?? (perfTab === '1w' ? summary.weekly_pnl : perfTab === '1m' ? summary.monthly_pnl : summary.daily_pnl);
+  const perfPct = perf?.pnl_pct ?? (perfTab === '1w' ? summary.weekly_pnl_pct : perfTab === '1m' ? summary.monthly_pnl_pct : summary.daily_pnl_pct);
+  const chartData = perf?.chart_data ?? [];
 
   // Kategori bazlı dağılım
   const categoryMap: Record<string, number> = {};
@@ -191,16 +210,52 @@ export default function WalletPage() {
             ))}
           </div>
         </div>
-        <div className="flex items-center gap-4">
+
+        <div className="flex items-center gap-6 mb-4">
           <div>
             <p className="text-gray-500 text-xs">P&L</p>
-            <PnlBadge value={perfPnl} suffix=" ₺" />
+            {perfLoading ? <span className="text-gray-600 text-sm">—</span> : <PnlBadge value={perfPnl} suffix=" ₺" />}
           </div>
           <div>
             <p className="text-gray-500 text-xs">Değişim</p>
-            <PnlBadge value={perfPct} suffix="%" />
+            {perfLoading ? <span className="text-gray-600 text-sm">—</span> : <PnlBadge value={perfPct} suffix="%" />}
           </div>
+          {perf && (
+            <div>
+              <p className="text-gray-500 text-xs">Dönem Başı</p>
+              <p className="text-gray-300 text-sm font-medium">{fmt(perf.initial_value)} ₺</p>
+            </div>
+          )}
         </div>
+
+        {chartData.length >= 2 ? (
+          <div className="h-32">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                <XAxis dataKey="label" tick={{ fill: '#6b7280', fontSize: 10 }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
+                <YAxis hide domain={['auto', 'auto']} />
+                <Tooltip
+                  contentStyle={{ background: '#111827', border: '1px solid #374151', borderRadius: 8, fontSize: 12 }}
+                  labelStyle={{ color: '#9ca3af' }}
+                  formatter={(v: number) => [`${fmt(v)} ₺`, 'Değer']}
+                />
+                <ReferenceLine y={chartData[0]?.value} stroke="#374151" strokeDasharray="3 3" />
+                <Line
+                  type="monotone"
+                  dataKey="value"
+                  stroke={perfPnl >= 0 ? '#22c55e' : '#ef4444'}
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 4 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        ) : (
+          <p className="text-gray-600 text-xs text-center py-4">
+            Grafik için yeterli veri yok. İşlem yaptıkça geçmiş oluşur.
+          </p>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
