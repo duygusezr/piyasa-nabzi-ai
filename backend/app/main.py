@@ -51,6 +51,10 @@ from app.models.schemas import (
     MarketCalendarEvent,
     AssistantAskRequest,
     AssistantAskResponse,
+    PortfolioContext,
+    PortfolioPositionSummary,
+    WhatIfResult,
+    WhatIfPositionImpact,
     SimulationAccount,
     SimulationCreateRequest,
     SimulationBuyRequest,
@@ -483,11 +487,116 @@ async def simulation_portfolio_summary(
 
 # ── AI Asistan endpoint ───────────────────────────────────────────────────────
 
+def _build_portfolio_context(account) -> PortfolioContext | None:
+    """Kullanıcı hesabını PortfolioContext'e dönüştür."""
+    if not account:
+        return None
+    from app.services.simulation_service import _get_asset_meta
+    positions_data = []
+    positions_value = 0.0
+    for pos in account.positions:
+        meta = _get_asset_meta(pos.symbol)
+        current_price = meta["price"] if meta else pos.current_price
+        market_value = pos.quantity * current_price
+        cost_basis = pos.quantity * pos.avg_cost
+        pnl = market_value - cost_basis
+        pnl_pct = (pnl / cost_basis * 100) if cost_basis > 0 else 0.0
+        positions_value += market_value
+        positions_data.append(PortfolioPositionSummary(
+            symbol=pos.symbol, name=pos.name,
+            quantity=pos.quantity, avg_cost=pos.avg_cost,
+            current_price=current_price, market_value=round(market_value, 2),
+            pnl=round(pnl, 2), pnl_pct=round(pnl_pct, 2),
+            portfolio_weight=0.0,  # sonra hesapla
+        ))
+    total_value = account.cash_balance + positions_value
+    total_return_pct = ((total_value - account.initial_balance) / account.initial_balance * 100) if account.initial_balance > 0 else 0.0
+    # portfolio_weight hesapla
+    for p in positions_data:
+        p.portfolio_weight = round(p.market_value / total_value * 100, 1) if total_value > 0 else 0.0
+    return PortfolioContext(
+        total_value=round(total_value, 2),
+        cash_balance=round(account.cash_balance, 2),
+        positions_value=round(positions_value, 2),
+        initial_balance=account.initial_balance,
+        total_return_pct=round(total_return_pct, 2),
+        positions=positions_data,
+    )
+
+
+_WHATIF_SYMBOL_MAP = {
+    "BTC": ["BTC"], "BITCOIN": ["BTC"],
+    "ETH": ["ETH"], "ETHEREUM": ["ETH"],
+    "XAU": ["XAU"], "ALTIN": ["XAU"], "GOLD": ["XAU"],
+    "XU100": ["XU100"], "BIST": ["XU100"], "BIST100": ["XU100"],
+    "USDTRY": ["USDTRY"], "DOLAR": ["USDTRY", "XAUUSD"],
+    "SOL": ["SOL"], "BNB": ["BNB"],
+}
+
+
+def _compute_whatif(account, asset: str, change_pct: float) -> WhatIfResult | None:
+    """Verilen senaryo için portföye matematiksel etki hesapla."""
+    if not account or not account.positions:
+        return None
+    from app.services.simulation_service import _get_asset_meta
+    symbols = _WHATIF_SYMBOL_MAP.get(asset.upper(), [asset.upper()])
+    positions_value = sum(
+        pos.quantity * (_get_asset_meta(pos.symbol) or {}).get("price", pos.current_price)
+        for pos in account.positions
+    )
+    total_value = account.cash_balance + positions_value
+    impacts: list[WhatIfPositionImpact] = []
+    total_impact_tl = 0.0
+    for pos in account.positions:
+        if pos.symbol.upper() in symbols:
+            meta = _get_asset_meta(pos.symbol)
+            mv = pos.quantity * (meta["price"] if meta else pos.current_price)
+            impact_tl = mv * (change_pct / 100)
+            total_impact_tl += impact_tl
+            impacts.append(WhatIfPositionImpact(
+                symbol=pos.symbol, name=pos.name,
+                market_value=round(mv, 2),
+                impact_tl=round(impact_tl, 2),
+                impact_pct=round(change_pct, 2),
+                new_value=round(mv + impact_tl, 2),
+            ))
+    if not impacts:
+        return None
+    total_impact_pct = (total_impact_tl / total_value * 100) if total_value > 0 else 0.0
+    return WhatIfResult(
+        asset=asset, change_pct=change_pct,
+        total_impact_tl=round(total_impact_tl, 2),
+        total_impact_pct=round(total_impact_pct, 2),
+        portfolio_before=round(total_value, 2),
+        portfolio_after=round(total_value + total_impact_tl, 2),
+        position_impacts=impacts,
+    )
+
+
 @app.post("/api/assistant/ask")
-async def assistant_ask(req: AssistantAskRequest):
+async def assistant_ask(
+    req: AssistantAskRequest,
+    creds: HTTPAuthorizationCredentials = Depends(_bearer),
+):
     try:
-        market_data = await market_data_agent.run()
-        news_signals = await geopolitical_news_agent.run(quick=True)
+        # Kullanıcı portföyünü oku (token varsa)
+        account = None
+        if creds:
+            from app.services.auth_service import decode_token
+            from app.services.simulation_service import get_account
+            payload = decode_token(creds.credentials)
+            if payload:
+                account = get_account(payload["sub"])
+
+        portfolio_ctx = _build_portfolio_context(account)
+        whatif_result = None
+        if req.whatif_asset and req.whatif_change_pct is not None and account:
+            whatif_result = _compute_whatif(account, req.whatif_asset, req.whatif_change_pct)
+
+        market_data, news_signals = await asyncio.gather(
+            market_data_agent.run(),
+            geopolitical_news_agent.run(quick=True),
+        )
 
         market_snapshot = {
             "btc_try":  market_data.bitcoin.price,
@@ -506,18 +615,22 @@ async def assistant_ask(req: AssistantAskRequest):
 
         assistant_raw = await generate_assistant_analysis(
             user_message=req.question,
-            capital=100000,
+            capital=portfolio_ctx.total_value if portfolio_ctx else 100000,
             capital_currency="TRY",
             duration_days=30,
-            assets=[],
+            assets=[p.symbol for p in portfolio_ctx.positions] if portfolio_ctx else [],
             market_snapshot=market_snapshot,
             news_headlines=news_headlines,
+            portfolio_context=portfolio_ctx,
+            whatif_result=whatif_result,
         )
         assistant_analysis = _build_assistant_analysis(assistant_raw)
 
         return AssistantAskResponse(
             answer=assistant_analysis,
             related_news=related_news,
+            portfolio_context=portfolio_ctx,
+            whatif_result=whatif_result,
             generated_at=datetime.now(timezone.utc).isoformat(),
         ).model_dump()
 

@@ -48,11 +48,18 @@ export async function fetchMarketCalendar(): Promise<{ events: import('../types'
 
 // ── AI Asistan ────────────────────────────────────────────────────────────────
 
-export async function askAssistant(question: string): Promise<import('../types').AssistantAskResponse> {
+export async function askAssistant(
+  question: string,
+  whatif_asset?: string,
+  whatif_change_pct?: number,
+): Promise<import('../types').AssistantAskResponse> {
+  const body: import('../types').AssistantAskRequest = { question };
+  if (whatif_asset !== undefined) body.whatif_asset = whatif_asset;
+  if (whatif_change_pct !== undefined) body.whatif_change_pct = whatif_change_pct;
   const res = await fetch(`${BASE_URL}/api/assistant/ask`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question }),
+    headers: authHeaders(),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error('Assistant ask failed');
   return res.json();

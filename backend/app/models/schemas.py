@@ -201,11 +201,55 @@ class MarketCalendarEvent(BaseModel):
 
 class AssistantAskRequest(BaseModel):
     question: str = Field(..., min_length=3, max_length=1000)
+    whatif_asset: Optional[str] = None    # e.g. "BTC", "XAU", "USDTRY"
+    whatif_change_pct: Optional[float] = None  # e.g. -10.0
+
+
+class PortfolioPositionSummary(BaseModel):
+    symbol: str
+    name: str
+    market_value: float
+    avg_cost: float
+    current_price: float
+    quantity: float
+    pnl: float
+    pnl_pct: float
+    portfolio_weight: float
+
+
+class PortfolioContext(BaseModel):
+    total_value: float
+    cash_balance: float
+    positions_value: float
+    initial_balance: float
+    total_return_pct: float
+    positions: list[PortfolioPositionSummary]
+
+
+class WhatIfPositionImpact(BaseModel):
+    symbol: str
+    name: str
+    market_value: float
+    impact_tl: float
+    impact_pct: float
+    new_value: float
+
+
+class WhatIfResult(BaseModel):
+    asset: str
+    change_pct: float
+    total_impact_tl: float
+    total_impact_pct: float
+    portfolio_before: float
+    portfolio_after: float
+    position_impacts: list[WhatIfPositionImpact]
 
 
 class AssistantAskResponse(BaseModel):
     answer: AssistantAnalysis
     related_news: list[NewsSignal] = []
+    portfolio_context: Optional[PortfolioContext] = None
+    whatif_result: Optional[WhatIfResult] = None
     generated_at: str
 
 

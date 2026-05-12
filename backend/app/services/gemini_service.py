@@ -288,6 +288,8 @@ async def generate_assistant_analysis(
     assets: list[str],
     market_snapshot: dict,
     news_headlines: list[str] | None = None,
+    portfolio_context=None,   # PortfolioContext | None
+    whatif_result=None,       # WhatIfResult | None
 ) -> dict:
     """Yapılandırılmış JSON formatında karar destek analizi üretir."""
     logger.info(
@@ -314,12 +316,50 @@ async def generate_assistant_analysis(
     if news_headlines:
         news_block = "Güncel haber başlıkları:\n" + "\n".join(f"- {h}" for h in news_headlines[:6])
 
+    portfolio_block = ""
+    if portfolio_context is not None:
+        try:
+            pos_lines = []
+            for p in portfolio_context.positions:
+                pnl_sign = "+" if p.pnl >= 0 else ""
+                pos_lines.append(
+                    f"  - {p.name} ({p.symbol}): {p.quantity} adet | "
+                    f"Alış: {p.avg_cost:,.2f} TL | Güncel: {p.current_price:,.2f} TL | "
+                    f"K/Z: {pnl_sign}{p.pnl:,.2f} TL ({pnl_sign}{p.pnl_pct:.2f}%) | "
+                    f"Ağırlık: %{p.portfolio_weight:.1f}"
+                )
+            ret_sign = "+" if portfolio_context.total_return_pct >= 0 else ""
+            portfolio_block = (
+                f"\nKULLANICI PORTFÖYÜ (Kişiselleştirilmiş Analiz):\n"
+                f"Toplam değer: {portfolio_context.total_value:,.0f} TL | "
+                f"Nakit: {portfolio_context.cash_balance:,.0f} TL | "
+                f"Yatırım başlangıcı: {portfolio_context.initial_balance:,.0f} TL | "
+                f"Toplam getiri: {ret_sign}{portfolio_context.total_return_pct:.2f}%\n"
+                + ("\n".join(pos_lines) if pos_lines else "  (Açık pozisyon yok)")
+            )
+        except Exception:
+            portfolio_block = ""
+
+    whatif_block = ""
+    if whatif_result is not None:
+        try:
+            sign = "+" if whatif_result.total_impact_tl >= 0 else ""
+            whatif_block = (
+                f"\nWHAT-IF SENARYOSU: {whatif_result.asset} %{whatif_result.change_pct:+.1f} değişirse...\n"
+                f"Hesaplanan Etki: {sign}{whatif_result.total_impact_tl:,.0f} TL | "
+                f"Portföy: {whatif_result.portfolio_before:,.0f} TL → {whatif_result.portfolio_after:,.0f} TL "
+                f"({sign}{whatif_result.total_impact_pct:.2f}%)\n"
+                f"Bu what-if senaryosunun etkisini directAnswer'a entegre et ve hangi pozisyonların nasıl etkileneceğini açıkla."
+            )
+        except Exception:
+            whatif_block = ""
+
     prompt = f"""SORU: "{user_message}"
 PİYASA: BTC={btc:,.0f}TL Altın={gold:,.0f}TL USD/TRY={usd:.2f} BIST={bist:,.0f} | {capital_note} | Süre:{duration_days}g | Varlıklar:{assets_str}
-{news_block}
+{news_block}{portfolio_block}{whatif_block}
 
 JSON formatında karar destek analizi üret. Alanlar:
-- directAnswer: soruya 2-3 cümle doğrudan somut cevap (piyasa verisini kullan)
+- directAnswer: soruya 2-3 cümle doğrudan somut cevap (piyasa verisini kullan; portföy varsa kişiselleştir)
 - marketContext: güncel veriler ve haber akışının soruyla ilişkisi
 - affectedAssets: array, her item → asset/possibleEffect/reason/riskLevel(düşük|orta|yüksek), min 4 item
 - actionableOptions: array, her item → title/description/whenUseful/risk(düşük|orta|yüksek), min 3 item

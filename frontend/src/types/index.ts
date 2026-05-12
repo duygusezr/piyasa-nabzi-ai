@@ -231,9 +231,57 @@ export interface AssistantAnalysis {
   disclaimer: string;
 }
 
+export interface PortfolioPositionSummary {
+  symbol: string;
+  name: string;
+  market_value: number;
+  avg_cost: number;
+  current_price: number;
+  quantity: number;
+  pnl: number;
+  pnl_pct: number;
+  portfolio_weight: number;
+}
+
+export interface PortfolioContext {
+  total_value: number;
+  cash_balance: number;
+  positions_value: number;
+  initial_balance: number;
+  total_return_pct: number;
+  positions: PortfolioPositionSummary[];
+}
+
+export interface WhatIfPositionImpact {
+  symbol: string;
+  name: string;
+  market_value: number;
+  impact_tl: number;
+  impact_pct: number;
+  new_value: number;
+}
+
+export interface WhatIfResult {
+  asset: string;
+  change_pct: number;
+  total_impact_tl: number;
+  total_impact_pct: number;
+  portfolio_before: number;
+  portfolio_after: number;
+  position_impacts: WhatIfPositionImpact[];
+}
+
+export interface AssistantAskRequest {
+  question: string;
+  whatif_asset?: string;
+  whatif_change_pct?: number;
+}
+
 export interface AssistantAskResponse {
   answer: AssistantAnalysis;
   related_news: NewsSignal[];
+  portfolio_context?: PortfolioContext;
+  whatif_result?: WhatIfResult;
   generated_at: string;
 }
 
