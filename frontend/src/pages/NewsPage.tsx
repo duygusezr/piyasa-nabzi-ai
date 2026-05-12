@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { Calendar, Clock, TrendingUp, TrendingDown, Minus, RefreshCw } from 'lucide-react';
 import { NewsSignal, MarketCalendarEvent } from '../types';
 
-const BASE_URL = 'http://localhost:8001';
+const BASE_URL = import.meta.env.VITE_API_URL ?? '';
 
 const NEWS_CATEGORIES = [
   'Tümü', 'Kripto', 'Borsa İstanbul', 'Fonlar', 'Değerli Madenler',

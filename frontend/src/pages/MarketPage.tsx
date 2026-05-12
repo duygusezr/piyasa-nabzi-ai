@@ -3,7 +3,7 @@ import { TrendingUp, TrendingDown, RefreshCw } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { AssetPrice, MarketData } from '../types';
 
-const BASE_URL = 'http://localhost:8001';
+const BASE_URL = import.meta.env.VITE_API_URL ?? '';
 
 const CATEGORIES: Record<string, string[]> = {
   'Kripto': ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'PAXG'],

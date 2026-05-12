@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { TrendingUp, TrendingDown, Newspaper, Bot, ArrowRight } from 'lucide-react';
 import { MarketData, NewsSignal } from '../types';
 
-const BASE_URL = 'http://localhost:8001';
+const BASE_URL = import.meta.env.VITE_API_URL ?? '';
 
 function formatPrice(price: number): string {
   if (price >= 1000000) return `₺${(price / 1000000).toFixed(2)}M`;
