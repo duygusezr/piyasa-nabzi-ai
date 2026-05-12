@@ -179,6 +179,15 @@ export async function fetchAssetImpact(
   return res.json();
 }
 
+export async function fetchMarketHistory(
+  symbol: string,
+  period: '1D' | '1W' | '1M' | '3M' | '1Y',
+): Promise<import('../types').MarketHistoryResponse> {
+  const res = await fetch(`${BASE_URL}/api/market/history?symbol=${symbol}&period=${period}`);
+  if (!res.ok) throw new Error('Market history fetch failed');
+  return res.json();
+}
+
 export async function fetchPortfolioSummary(): Promise<import('../types').SimulationPortfolioSummary> {
   const res = await fetch(`${BASE_URL}/api/simulation/portfolio/summary`, {
     headers: authHeaders(),

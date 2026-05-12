@@ -76,6 +76,7 @@ from app.agents import (
 from app.agents.asset_impact_agent import _rule_based_impact
 from app.services.scenario_service import build_simulation_portfolio
 from app.services.gemini_service import generate_assistant_analysis
+from app.services.history_service import get_market_history, set_usd_try_rate
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
@@ -283,8 +284,35 @@ async def analyze_goal(request: GoalRequest):
 async def get_market_data():
     try:
         data: MarketData = await market_data_agent.run()
+        # Kripto→TRY çevrimi için USD/TRY kurunu history service'e kaydet
+        if data and data.usd_try and data.usd_try.price > 0:
+            set_usd_try_rate(data.usd_try.price)
         return data.model_dump()
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/market/history")
+async def get_history(
+    symbol: str = Query(..., min_length=1, max_length=20),
+    period: str = Query("1M", pattern="^(1D|1W|1M|3M|1Y)$"),
+):
+    """
+    Sembol ve periyot için gerçek OHLCV mum grafik verisi döner.
+    Kripto → Binance klines API (USDT → TRY çevrimi)
+    Hisse/Endeks/Emtia/Döviz → Yahoo Finance chart API
+    """
+    try:
+        candles = await get_market_history(symbol.upper(), period)
+        return {
+            "symbol": symbol.upper(),
+            "period": period,
+            "candles": candles,
+            "count": len(candles),
+            "currency": "TRY",
+        }
+    except Exception as e:
+        logger.error("[history] %s/%s hata: %s", symbol, period, e)
         raise HTTPException(status_code=500, detail=str(e))
 
 

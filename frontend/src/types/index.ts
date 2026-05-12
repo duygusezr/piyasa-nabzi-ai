@@ -285,6 +285,24 @@ export interface AssistantAskResponse {
   generated_at: string;
 }
 
+// ── Grafik / Geçmiş veri ─────────────────────────────────────────────────────
+export interface CandleData {
+  time: number;    // UTC saniye (Unix timestamp)
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface MarketHistoryResponse {
+  symbol: string;
+  period: string;
+  candles: CandleData[];
+  count: number;
+  currency: string;
+}
+
 // ── Kredi Faiz ────────────────────────────────────────────────────────────────
 export interface CreditOffer {
   bank: string;
