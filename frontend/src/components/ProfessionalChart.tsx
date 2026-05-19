@@ -19,7 +19,7 @@ import {
   type CandlestickData,
   type Time,
 } from 'lightweight-charts';
-import { Loader, AlertCircle, TrendingUp, TrendingDown } from 'lucide-react';
+import { Loader, AlertCircle, TrendingUp, TrendingDown, RefreshCw } from 'lucide-react';
 import { fetchMarketHistory } from '../services/api';
 import type { CandleData } from '../types';
 
@@ -351,35 +351,67 @@ export function ProfessionalChart({ symbol, assetName, currentPrice, changePct24
 
       {/* ── Grafik alanı ───────────────────────────────────────────────────────── */}
       <div className="relative min-h-[420px]">
+
+        {/* Yükleniyor */}
         {loading && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center bg-gray-900/80">
-            <div className="text-center">
-              <Loader size={28} className="animate-spin text-blue-400 mx-auto mb-2" />
-              <p className="text-gray-400 text-xs">Fiyat geçmişi yükleniyor...</p>
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-gray-900/90">
+            <div className="text-center space-y-3 px-6">
+              <Loader size={32} className="animate-spin text-blue-400 mx-auto" />
+              <p className="text-white text-sm font-medium">Grafik verisi çekiliyor…</p>
+              <p className="text-gray-500 text-xs max-w-xs">
+                Binance veya CoinGecko API'sından geçmiş fiyatlar alınıyor.
+                Bu işlem birkaç saniye sürebilir.
+              </p>
+              <div className="flex items-center justify-center gap-1.5 text-xs text-gray-600">
+                <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+              </div>
             </div>
           </div>
         )}
+
+        {/* Hata */}
         {error && !loading && (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-gray-900/90">
-            <div className="text-center px-6">
-              <AlertCircle size={28} className="text-red-400 mx-auto mb-2" />
-              <p className="text-red-400 text-sm">{error}</p>
+            <div className="text-center px-8 space-y-3">
+              <AlertCircle size={32} className="text-yellow-400 mx-auto" />
+              <p className="text-white text-sm font-medium">Grafik şu an yüklenemiyor</p>
+              <p className="text-gray-400 text-xs max-w-xs">
+                Harici API geçici olarak yanıt vermiyor olabilir.
+                Fiyat kartı yukarıda günceldir.
+              </p>
               <button
                 onClick={loadHistory}
-                className="mt-3 text-xs text-blue-400 hover:underline"
+                className="flex items-center gap-2 mx-auto mt-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs text-gray-300 transition-colors"
               >
-                Tekrar dene
+                <RefreshCw size={12} /> Tekrar dene
               </button>
             </div>
           </div>
         )}
-        {/* lightweight-charts render hedefi */}
-        <div ref={containerRef} className="w-full" />
+
+        {/* Veri yok (loading bitti, hata yok, mum da yok) */}
         {candles.length === 0 && !loading && !error && (
           <div className="absolute inset-0 flex items-center justify-center">
-            <p className="text-gray-600 text-sm">Bu varlık için geçmiş veri bulunamadı</p>
+            <div className="text-center px-8 space-y-3">
+              <AlertCircle size={28} className="text-gray-600 mx-auto" />
+              <p className="text-gray-400 text-sm">Geçmiş veri henüz alınamadı</p>
+              <p className="text-gray-600 text-xs max-w-xs">
+                API yavaş yanıt vermiş olabilir. Birkaç saniye bekleyip tekrar deneyin.
+              </p>
+              <button
+                onClick={loadHistory}
+                className="flex items-center gap-2 mx-auto px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs text-gray-300 transition-colors"
+              >
+                <RefreshCw size={12} /> Tekrar dene
+              </button>
+            </div>
           </div>
         )}
+
+        {/* lightweight-charts render hedefi */}
+        <div ref={containerRef} className="w-full" />
       </div>
 
       {/* ── Alt bilgi ──────────────────────────────────────────────────────────── */}
