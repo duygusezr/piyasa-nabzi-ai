@@ -235,30 +235,43 @@ function ConfidenceDot({ level }: { level: string }) {
  * benzersiz bir yorum üretir. Her haber farklı metin alır.
  */
 function generateFallbackComment(n: NewsSignal): string {
-  const title     = (n.tr_title || n.title || '').trim();
-  const assets    = n.affected_assets?.slice(0, 3) ?? [];
-  const assetsStr = assets.length > 0 ? assets.join(', ') : 'ilgili varlıklar';
-  const category  = n.category || 'Genel';
-  const riskMap: Record<string, string> = { high: 'yüksek riskli', medium: 'orta riskli', low: 'düşük riskli' };
-  const riskLabel = riskMap[n.risk_level] ?? 'orta riskli';
+  const title    = (n.tr_title || n.title || '').trim();
+  const assets   = n.affected_assets?.slice(0, 3) ?? [];
+  const primary  = assets[0] ?? 'ilgili varlık';
+  const secondary = assets.slice(1, 3).join(', ');
+  const category = n.category || 'Genel';
+
   const shortTitle = title.length > 60 ? title.slice(0, 57) + '…' : title;
-  const prefix = shortTitle ? `“${shortTitle}” — ${riskLabel} bir gelişme. ` : '';
-  const bodies: Record<string, string> = {
-    pozitif:
-      `${assetsStr} için kısa vadeli yukarı yönlü momentum oluşabilir. ` +
-      'Piyasa bu haberi olumlu fiyatlamaya başlamış olabilir; hacim artışı ve momentum sinyalleri teyit için izlenmelidir. ' +
-      'Tek habere dayalı pozisyon açmak yerine trend onayı beklenmeli.',
-    negatif:
-      `${assetsStr} üzerinde satış baskısı oluşabilir; volatilite artabilir. ` +
-      'Stop-loss seviyeleri belirlenmeli ve pozisyon büyüklüğü bu koşullara göre ayarlanmalı. Ek haber akışı yakından takip edilmeli.',
-    'karışık':
-      `${assetsStr} varlıklarını farklı yönlerde etkileyebilir; ${category} kategorisinde sektörel ayrışma olası. ` +
-      'Belirsizlik kısa süre devam edebilir; her varlık birbirinden bağımsız değerlendirilmeli.',
-    'nötr':
-      `${assetsStr} üzerindeki doğrudan etkisi sınırlı görünmektedir. ` +
-      `${category} kategorisindeki genel trend değişmediği sürece piyasa tepkisi ılımlı kalabilir. Makroekonomik bağlam ve sonraki haber akışı takip edilmeli.`,
-  };
-  return prefix + (bodies[n.impact_direction] ?? bodies['nötr']);
+  const prefix = shortTitle ? `“${shortTitle}” — ` : '';
+  const disclaimer = ' Bu yorum simülasyon amaçlıdır.';
+
+  let verdict: string;
+  let reason: string;
+
+  if (n.impact_direction === 'pozitif') {
+    verdict = `Bu haber ${primary} fiyatını YÜKSELTİR.`;
+    reason  = `${category} kaynaklı bu olumlu gelişme ${primary} talebini artırır` +
+              (secondary ? `; ${secondary} da pozitif etkilenir` : '') +
+              '. Fiyat hareketini doğrulamak için hacim artışı takip edilmeli.';
+  } else if (n.impact_direction === 'negatif') {
+    verdict = `Bu haber ${primary} fiyatını DÜŞÜRÜR.`;
+    reason  = `Bu olumsuz gelişme ${primary} üzerinde satış baskısı yaratır` +
+              (secondary ? `; ${secondary} da olumsuz etkilenir` : '') +
+              '. Destek seviyesi kırılırsa düşüş hızlanabilir.';
+  } else if (n.impact_direction === 'karışık') {
+    const second = assets[1] ?? 'diğer varlıklar';
+    verdict = `Bu haber ${primary}'i yükseltir, ${second}'yi baskılar.`;
+    reason  = `${category} kategorisinde sektörel ayrışma yaşanır; ` +
+              'her varlık birbirinden bağımsız değerlendirilmeli. ' +
+              'Belirsizlik kademeli açıklamalarla azalabilir.';
+  } else {
+    verdict = `Bu haberin ${primary} üzerinde belirgin yönlü etkisi beklenmez.`;
+    reason  = `${category} kategorisindeki mevcut trend devam eder; ` +
+              'piyasa fiyatlamada bu haberi ikincil görüyor. ' +
+              'Farklı bir katalist çıkmazsa yön değişmesi öngörülmez.';
+  }
+
+  return prefix + verdict + ' ' + reason + disclaimer;
 }
 
 function AiCommentBox({ news }: { news: NewsSignal }) {

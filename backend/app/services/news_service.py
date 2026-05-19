@@ -240,13 +240,12 @@ def _apply_cache(article: dict) -> dict:
 
 def _generate_rule_based_comment(article: dict) -> str:
     """
-    Gemini yorumu boş geldiğinde makaleye özgü kural tabanlı yorum üretir.
-    Her makale için farklı içerik çıkar: başlık, varlıklar, yön ve risk
-    kombinasyonu benzersiz bir metin oluşturur.
+    Gemini yorumu boş geldiğinde makaleye özgü, NET ve DOĞRUDAN yorum üretir.
     """
     title     = (article.get("tr_title") or article.get("title") or "").strip()[:80]
     assets    = article.get("affected_assets") or []
-    assets_str = ", ".join(assets[:3]) if assets else "ilgili varlıklar"
+    primary   = assets[0] if assets else "ilgili varlık"
+    secondary = ", ".join(assets[1:3]) if len(assets) > 1 else ""
     direction = article.get("impact_direction", "nötr")
     risk      = article.get("risk_level", "medium")
     category  = article.get("category", "Genel")
@@ -254,40 +253,41 @@ def _generate_rule_based_comment(article: dict) -> str:
     risk_labels = {"high": "yüksek riskli", "medium": "orta riskli", "low": "düşük riskli"}
     risk_label  = risk_labels.get(str(risk), "orta riskli")
 
-    dir_texts = {
-        "pozitif": (
-            f"{assets_str} için kısa vadeli yukarı yönlü hareket potansiyeli taşıyan bu gelişme, "
-            f"{risk_label} bir senaryo oluşturmaktadır. "
-            "Piyasa bu haberi olumlu fiyatlamaya başlamış olabilir; "
-            "hacim artışı ve momentum sinyalleri teyit için izlenmelidir. "
-            "Tek habere dayalı pozisyon açmak yerine trend onayı beklemek önerilir."
-        ),
-        "negatif": (
-            f"{assets_str} üzerinde baskı oluşturabilecek bu haber {risk_label} kapsamındadır. "
-            "Kısa vadede satış baskısı ve volatilite artışı gündeme gelebilir. "
-            "Stop-loss seviyeleri belirlenmeli ve pozisyon büyüklüğü bu koşullara göre ayarlanmalıdır. "
-            "Ek haber akışına dikkat edilmesi kritik önem taşımaktadır."
-        ),
-        "karışık": (
-            f"Bu haber {assets_str} varlıklarını farklı yönlerde etkileyebilir. "
-            f"{category} kategorisinde sektörel ayrışma yaşanması olasıdır. "
-            "Belirsizlik ortamında çeşitlendirme stratejisi korunmalı; "
-            "her varlık birbirinden bağımsız değerlendirilmelidir."
-        ),
-        "nötr": (
-            f"Bu gelişmenin {assets_str} üzerindeki doğrudan etkisi sınırlı görünmektedir. "
-            f"{category} kategorisindeki genel trend değişmediği sürece "
-            "piyasa tepkisi ılımlı kalabilir. "
-            "Makroekonomik bağlam ve sonraki haber akışı yakından takip edilmelidir."
-        ),
-    }
+    # İlk cümle: net yön kararı
+    if direction == "pozitif":
+        verdict = f"Bu haber {primary} fiyatını YÜKSELTİR."
+        reason  = (
+            f"{category} kaynaklı bu olumlu gelişme {primary} talebini artırır; "
+            + (f"{secondary} da pozitif etkilenir. " if secondary else "")
+            + "Fiyat hareketini doğrulamak için hacim artışı takip edilmeli."
+        )
+    elif direction == "negatif":
+        verdict = f"Bu haber {primary} fiyatını DÜŞÜRÜR."
+        reason  = (
+            f"{risk_label.capitalize()} bu gelişme {primary} üzerinde satış baskısı yaratır; "
+            + (f"{secondary} da olumsuz etkilenir. " if secondary else "")
+            + "Destek seviyesi kırılırsa düşüş hızlanabilir."
+        )
+    elif direction == "karışık":
+        second = assets[1] if len(assets) > 1 else "diğer varlıklar"
+        verdict = f"Bu haber {primary}'i yükseltir, {second}'yi baskılar."
+        reason  = (
+            f"{category} kategorisinde sektörel ayrışma yaşanır; "
+            "her varlık birbirinden bağımsız değerlendirilmeli. "
+            "Belirsizlik kademeli açıklamalarla azalabilir."
+        )
+    else:  # nötr
+        verdict = f"Bu haberin {primary} üzerinde belirgin yönlü etkisi beklenmez."
+        reason  = (
+            f"{category} kategorisindeki mevcut trend devam eder; "
+            "piyasa fiyatlamada bu haberi ikincil görüyor. "
+            "Farklı bir katalist çıkmazsa yön beklentisi yönünde hareket öngörülmez."
+        )
 
-    base = dir_texts.get(direction, dir_texts["nötr"])
-
-    if title:
-        short_title = title if len(title) <= 60 else title[:57] + "…"
-        return f'"{short_title}" — {risk_label} bir gelişme. {base}'
-    return base
+    short_title = title if len(title) <= 60 else title[:57] + "…"
+    prefix = f'“{short_title}” — ' if short_title else ""
+    disclaimer = " Bu yorum simülasyon amaçlıdır."
+    return prefix + verdict + " " + reason + disclaimer
 
 
 def _rss_to_signal(article: dict, idx: int) -> NewsSignal:

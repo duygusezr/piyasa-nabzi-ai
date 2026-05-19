@@ -475,10 +475,17 @@ async def enrich_financial_batch(articles: list[dict]) -> list[dict]:
 
     prompt = f"""Aşağıdaki finansal/ekonomi haberlerini analiz et.
 Her haber için SADECE finansal etki değerlendirmesi yap (çeviri yapma):
-- gemini_comment  : Türkçe finans yorumu (3-4 cümle). Güvenli dil:
-    "etki yaratabilir", "risk sinyali oluşturabilir", "volatiliteyi artırabilir",
-    "takip edilebilir", "baskı yaratabilir". Yatırım tavsiyesi YASAK.
-- affected_assets : Etkilenebilecek Türkçe varlık adları listesi
+
+- gemini_comment: NET VE DOGRUDAN Türkçe finans yorumu (2-3 cümle).
+  KURAL 1: İlk cümle mutlaka şu formatta başlasın:
+    "Bu haber [varlık] fiyatını ARTTIRIR." / "Bu haber [varlık]'ı DÜŞÜRÜR." /
+    "Bu haber [varlık1]'i yükseltir, [varlık2]'yi baskılar." / "Bu haberin [varlık] üzerinde belirgin etkisi beklenmez."
+  KURAL 2: "etkileyebilir", "olaşıdır", "muhtemelen", "olabilir" gibi belirsiz sözcükler YASAK.
+  KURAL 3: İkinci cümle: bu yargıya neden ulaşıldığını kısaca açıkla (haber bağlantısı).
+  KURAL 4: Üçüncü cümle: hangi seviye veya veri izlenmeli.
+  Yatırım tavsiyesi YASAK — "Bu simülasyon amaçlıdır" ibaresi ekle.
+
+- affected_assets: Etkilenebilecek Türkçe varlık adları listesi
     (örn: "Bitcoin", "Altın", "USD/TRY", "BIST 100", "Petrol", "ASELSAN", "THY")
 - impact_direction: "pozitif" | "negatif" | "karışık" | "nötr"
 - risk_level      : "low" | "medium" | "high"
