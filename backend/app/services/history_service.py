@@ -51,6 +51,17 @@ _CRYPTO_MAP: dict[str, str] = {
     "PAXG": "PAXGUSDT",
 }
 
+# CoinGecko OHLC fallback — Binance başarısız olduğunda devreye girer
+_COINGECKO_IDS: dict[str, str] = {
+    "BTC":  "bitcoin",
+    "ETH":  "ethereum",
+    "SOL":  "solana",
+    "BNB":  "binancecoin",
+    "XRP":  "ripple",
+    "PAXG": "pax-gold",
+}
+_CG_DAYS: dict[str, int] = {"1D": 1, "1W": 7, "1M": 30, "3M": 90, "1Y": 365}
+
 # Diğer semboller → Yahoo Finance sembolü
 _YAHOO_MAP: dict[str, str] = {
     "XAU":    "GC=F",
@@ -205,6 +216,48 @@ async def _fetch_yahoo(yahoo_symbol: str, period: str) -> list[dict]:
         return []
 
 
+# ── CoinGecko OHLC fallback ──────────────────────────────────────────────────────
+
+async def _fetch_coingecko_ohlc(cg_id: str, period: str) -> list[dict]:
+    """CoinGecko /coins/{id}/ohlc — Binance klines başarısız olduğunda kullanılır.
+    Ücretsiz tier: 50 istek/dk, API key gerektirmez.
+    """
+    days = _CG_DAYS.get(period, 30)
+    usd_try = _usd_try_rate
+    try:
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            resp = await client.get(
+                f"https://api.coingecko.com/api/v3/coins/{cg_id}/ohlc",
+                params={"vs_currency": "usd", "days": str(days)},
+                headers={"Accept": "application/json", "User-Agent": "PiyasaNabziBot/1.0"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as exc:
+        logger.warning("[history:coingecko] %s/%s çekilemedi: %s", cg_id, period, exc)
+        return []
+
+    candles = []
+    for item in data:
+        if len(item) < 5:
+            continue
+        try:
+            ts, o, h, l, c = item[0], item[1], item[2], item[3], item[4]
+            candles.append({
+                "time":   int(ts) // 1000,
+                "open":   round(float(o) * usd_try, 2),
+                "high":   round(float(h) * usd_try, 2),
+                "low":    round(float(l) * usd_try, 2),
+                "close":  round(float(c) * usd_try, 2),
+                "volume": 0,
+            })
+        except (TypeError, ValueError):
+            continue
+
+    logger.info("[history:coingecko] %s %s → %d mum", cg_id, period, len(candles))
+    return candles
+
+
 # ── Genel arayüz ──────────────────────────────────────────────────────────────────
 
 async def get_market_history(symbol: str, period: str) -> list[dict]:
@@ -221,6 +274,10 @@ async def get_market_history(symbol: str, period: str) -> list[dict]:
 
     if symbol in _CRYPTO_MAP:
         candles = await _fetch_binance(_CRYPTO_MAP[symbol], period)
+        # Binance boş döndü → CoinGecko OHLC fallback
+        if not candles and symbol in _COINGECKO_IDS:
+            logger.info("[history] Binance boş, CoinGecko deneniyor: %s/%s", symbol, period)
+            candles = await _fetch_coingecko_ohlc(_COINGECKO_IDS[symbol], period)
     else:
         yahoo_sym = _YAHOO_MAP.get(symbol, f"{symbol}.IS")
         candles = await _fetch_yahoo(yahoo_sym, period)

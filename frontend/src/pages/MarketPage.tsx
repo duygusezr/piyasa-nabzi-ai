@@ -7,23 +7,14 @@ const BASE_URL = import.meta.env.VITE_API_URL ?? '';
 
 // ── Kategori → sembol eşlemesi ────────────────────────────────────────────────
 const CATEGORIES: Record<string, string[]> = {
-  'Kripto':          ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'PAXG'],
-  'Borsa İstanbul':  ['ASELS', 'THYAO', 'GARAN', 'AKBNK', 'KCHOL', 'TUPRS', 'SISE', 'BIMAS', 'FROTO', 'EREGL'],
-  'Değerli Madenler':['XAU', 'PAXG'],
-  'BIST Endeksleri': ['XU100', 'XU030'],
-  'Fonlar':          [],
+  'Kripto':           ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'PAXG'],
+  'Borsa İstanbul':   ['ASELS', 'THYAO', 'GARAN', 'AKBNK', 'KCHOL', 'TUPRS', 'SISE', 'BIMAS', 'FROTO', 'EREGL'],
+  'Değerli Madenler': ['XAU', 'PAXG'],
+  'BIST Endeksleri':  ['XU100', 'XU030'],
+  'Fonlar':           [], // dinamik — API'dan çekilir
 };
 
 const CATEGORY_LABELS = Object.keys(CATEGORIES);
-
-// Mock fon verileri (gerçek API yokken)
-const MOCK_FUNDS: AssetPrice[] = [
-  { symbol: 'PPF', name: 'Para Piyasası Fonu',     price: 1.0423, currency: 'TRY', change_24h: 0.0012,  change_pct_24h:  0.12, timestamp: new Date().toISOString(), source: 'Mock', is_mock: true },
-  { symbol: 'BAF', name: 'Borçlanma Araçları Fonu', price: 1.1823, currency: 'TRY', change_24h: 0.0045,  change_pct_24h:  0.38, timestamp: new Date().toISOString(), source: 'Mock', is_mock: true },
-  { symbol: 'HSF', name: 'Hisse Senedi Fonu',       price: 2.3412, currency: 'TRY', change_24h: -0.0234, change_pct_24h: -0.99, timestamp: new Date().toISOString(), source: 'Mock', is_mock: true },
-  { symbol: 'ALF', name: 'Altın Fonu',              price: 1.8923, currency: 'TRY', change_24h: 0.0189,  change_pct_24h:  1.01, timestamp: new Date().toISOString(), source: 'Mock', is_mock: true },
-  { symbol: 'KTF', name: 'Katılım Fonu',            price: 1.2134, currency: 'TRY', change_24h: 0.0021,  change_pct_24h:  0.17, timestamp: new Date().toISOString(), source: 'Mock', is_mock: true },
-];
 
 // ── Yardımcı bileşenler ───────────────────────────────────────────────────────
 
@@ -31,6 +22,11 @@ function DataBadge({ source, isMock }: { source: string; isMock: boolean }) {
   if (isMock) return (
     <span className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-orange-900/50 text-orange-400 border border-orange-800/50">
       <WifiOff size={9} />Mock
+    </span>
+  );
+  if (source === 'TEFAS') return (
+    <span className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-emerald-900/50 text-emerald-400 border border-emerald-800/50">
+      <Wifi size={9} />TEFAS
     </span>
   );
   if (source.includes('Binance')) return (
@@ -52,7 +48,7 @@ function formatPrice(price: number): string {
   return `₺${price.toFixed(6)}`;
 }
 
-// Küçük SVG sparkline — kart içi mini grafik (sahte, stabil seed bazlı)
+// Mini sparkline
 function MiniSparkline({ price, changePct, symbol }: { price: number; changePct: number; symbol: string }) {
   const seed = symbol.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
   const points = 20;
@@ -63,7 +59,6 @@ function MiniSparkline({ price, changePct, symbol }: { price: number; changePct:
     v = v + n;
     values.push(Math.max(v, price * 0.85));
   }
-  // Sonu mevcut fiyata yaklaştır
   values[values.length - 1] = price;
 
   const min = Math.min(...values);
@@ -88,11 +83,18 @@ function MiniSparkline({ price, changePct, symbol }: { price: number; changePct:
 // ── Ana bileşen ────────────────────────────────────────────────────────────────
 
 export default function MarketPage() {
-  const [market, setMarket]                 = useState<MarketData | null>(null);
-  const [loading, setLoading]               = useState(true);
+  const [market, setMarket]                   = useState<MarketData | null>(null);
+  const [loading, setLoading]                 = useState(true);
   const [selectedCategory, setSelectedCategory] = useState('Kripto');
-  const [selectedAsset, setSelectedAsset]   = useState<AssetPrice | null>(null);
-  const [lastUpdated, setLastUpdated]       = useState<Date>(new Date());
+  const [selectedAsset, setSelectedAsset]     = useState<AssetPrice | null>(null);
+  const [lastUpdated, setLastUpdated]         = useState<Date>(new Date());
+
+  // Fon state'i
+  const [funds, setFunds]           = useState<AssetPrice[]>([]);
+  const [fundsLoading, setFundsLoading] = useState(false);
+  const [fundsFetched, setFundsFetched] = useState(false);
+
+  // ── Piyasa verisi ─────────────────────────────────────────────────────────
 
   const loadData = useCallback(() => {
     setLoading(true);
@@ -102,7 +104,6 @@ export default function MarketPage() {
         setMarket(data);
         setLastUpdated(new Date());
         setLoading(false);
-        // İlk yüklemede BTC'yi seç
         setSelectedAsset(prev => prev ?? data.bitcoin ?? null);
       })
       .catch(() => setLoading(false));
@@ -110,25 +111,55 @@ export default function MarketPage() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  // ── Fon verisi (sadece Fonlar sekmesinde çekilir) ─────────────────────────
+
+  const loadFunds = useCallback(() => {
+    setFundsLoading(true);
+    fetch(`${BASE_URL}/api/funds`)
+      .then(r => r.json())
+      .then(data => {
+        const list: AssetPrice[] = data.funds ?? [];
+        setFunds(list);
+        setFundsFetched(true);
+        setFundsLoading(false);
+        // İlk fonu seç
+        if (list.length > 0) setSelectedAsset(list[0]);
+      })
+      .catch(() => {
+        setFundsFetched(true);
+        setFundsLoading(false);
+      });
+  }, []);
+
   // Kategori değişince ilk varlığı seç
   useEffect(() => {
+    if (selectedCategory === 'Fonlar') {
+      if (!fundsFetched) loadFunds();
+      else if (funds.length > 0) setSelectedAsset(funds[0]);
+      return;
+    }
     if (!market) return;
     const syms = CATEGORIES[selectedCategory] ?? [];
-    if (syms.length === 0) { setSelectedAsset(MOCK_FUNDS[0]); return; }
     const found = market.assets.find(a => a.symbol === syms[0]);
     if (found) setSelectedAsset(found);
-  }, [selectedCategory, market]);
+  }, [selectedCategory, market, funds, fundsFetched, loadFunds]);
+
+  // ── Filtreli varlık listesi ───────────────────────────────────────────────
 
   const filteredAssets = useMemo<AssetPrice[]>(() => {
+    if (selectedCategory === 'Fonlar') return funds;
     if (!market) return [];
     const syms = CATEGORIES[selectedCategory] ?? [];
-    if (syms.length === 0) return MOCK_FUNDS;
     return market.assets.filter(a => syms.includes(a.symbol));
-  }, [market, selectedCategory]);
+  }, [market, selectedCategory, funds]);
+
+  const isCurrentLoading = selectedCategory === 'Fonlar' ? fundsLoading : loading;
+
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div className="p-4 md:p-6 space-y-5">
-      {/* ── Başlık ─────────────────────────────────────────────────────────── */}
+      {/* Başlık */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">Piyasa</h1>
@@ -137,15 +168,15 @@ export default function MarketPage() {
           </p>
         </div>
         <button
-          onClick={loadData}
+          onClick={selectedCategory === 'Fonlar' ? loadFunds : loadData}
           className="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm text-gray-300 transition-colors"
         >
-          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+          <RefreshCw size={14} className={isCurrentLoading ? 'animate-spin' : ''} />
           Yenile
         </button>
       </div>
 
-      {/* ── Kategori sekmeleri ──────────────────────────────────────────────── */}
+      {/* Kategori sekmeleri */}
       <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
         {CATEGORY_LABELS.map(cat => (
           <button
@@ -162,7 +193,7 @@ export default function MarketPage() {
         ))}
       </div>
 
-      {/* ── Profesyonel grafik ──────────────────────────────────────────────── */}
+      {/* Profesyonel grafik */}
       {selectedAsset && (
         <ProfessionalChart
           key={selectedAsset.symbol}
@@ -174,9 +205,17 @@ export default function MarketPage() {
         />
       )}
 
-      {/* ── Varlık kartları ─────────────────────────────────────────────────── */}
+      {/* Fonlar yükleniyor bilgisi */}
+      {selectedCategory === 'Fonlar' && fundsLoading && (
+        <div className="flex items-center gap-2 text-gray-500 text-sm">
+          <RefreshCw size={14} className="animate-spin" />
+          TEFAS'tan fon verileri çekiliyor...
+        </div>
+      )}
+
+      {/* Varlık kartları */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-        {loading
+        {isCurrentLoading
           ? Array(6).fill(0).map((_, i) => (
               <div key={i} className="bg-gray-900 rounded-xl p-4 border border-gray-800 animate-pulse h-36" />
             ))
@@ -221,9 +260,11 @@ export default function MarketPage() {
               );
             })
         }
-        {!loading && filteredAssets.length === 0 && (
+        {!isCurrentLoading && filteredAssets.length === 0 && (
           <div className="col-span-full text-center text-gray-600 py-10">
-            Bu kategoride veri bulunamadı
+            {selectedCategory === 'Fonlar'
+              ? 'Fon verileri yüklenemedi. Yenile butonuna tıklayın.'
+              : 'Bu kategoride veri bulunamadı'}
           </div>
         )}
       </div>

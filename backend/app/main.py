@@ -667,6 +667,25 @@ async def assistant_ask(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/funds")
+async def get_funds():
+    """
+    TEFAS Türk yatırım fonlarının güncel NAV verilerini döner.
+    Kaynak: TEFAS ws API → başarısız olursa gerçekçi mock.
+    """
+    try:
+        from app.services.tefas_service import get_fund_assets
+        assets = await get_fund_assets()
+        return {
+            "funds": [a.model_dump() for a in assets],
+            "count": len(assets),
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as e:
+        logger.error("[funds] Hata: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/interest-rates", response_model=CreditRates)
 async def get_interest_rates(
     price: int = 100000,
