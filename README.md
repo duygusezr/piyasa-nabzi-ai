@@ -8,6 +8,13 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-3178C6?style=flat&logo=typescript)](https://typescriptlang.org)
 [![Gemini](https://img.shields.io/badge/Gemini-2.5%20Flash-4285F4?style=flat&logo=google)](https://deepmind.google/gemini)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-Railway-blueviolet?style=flat&logo=railway)](https://frontend-production-6ea8.up.railway.app)
+
+## 🚀 Canlı Demo
+
+**➡️ [frontend-production-6ea8.up.railway.app](https://frontend-production-6ea8.up.railway.app)**
+
+> Uygulamayı tarayıcınızdan doğrudan deneyimleyebilirsiniz. Kayıt olarak tüm özelliklere erişebilirsiniz.
 
 ---
 
