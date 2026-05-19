@@ -10,11 +10,13 @@
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Railway-blueviolet?style=flat&logo=railway)](https://frontend-production-6ea8.up.railway.app)
 
-## 🚀 Canlı Demo
+## 🚀 Canlı Demo & Video
 
-**➡️ [frontend-production-6ea8.up.railway.app](https://frontend-production-6ea8.up.railway.app)**
+**➡️ Uygulama:** [frontend-production-6ea8.up.railway.app](https://frontend-production-6ea8.up.railway.app)
 
-> Uygulamayı tarayıcınızdan doğrudan deneyimleyebilirsiniz. Kayıt olarak tüm özelliklere erişebilirsiniz.
+**🎥 Demo Videosu:** [Google Drive'da İzle](https://drive.google.com/file/d/1Hu9IFnEQEq8gN4t5CR5hwtJOW_4kGCyj/view?usp=sharing)
+
+> Kayıt olarak tüm özelliklere erişebilirsiniz.
 
 ---
 
