@@ -238,6 +238,58 @@ def _apply_cache(article: dict) -> dict:
     return article
 
 
+def _generate_rule_based_comment(article: dict) -> str:
+    """
+    Gemini yorumu boş geldiğinde makaleye özgü kural tabanlı yorum üretir.
+    Her makale için farklı içerik çıkar: başlık, varlıklar, yön ve risk
+    kombinasyonu benzersiz bir metin oluşturur.
+    """
+    title     = (article.get("tr_title") or article.get("title") or "").strip()[:80]
+    assets    = article.get("affected_assets") or []
+    assets_str = ", ".join(assets[:3]) if assets else "ilgili varlıklar"
+    direction = article.get("impact_direction", "nötr")
+    risk      = article.get("risk_level", "medium")
+    category  = article.get("category", "Genel")
+
+    risk_labels = {"high": "yüksek riskli", "medium": "orta riskli", "low": "düşük riskli"}
+    risk_label  = risk_labels.get(str(risk), "orta riskli")
+
+    dir_texts = {
+        "pozitif": (
+            f"{assets_str} için kısa vadeli yukarı yönlü hareket potansiyeli taşıyan bu gelişme, "
+            f"{risk_label} bir senaryo oluşturmaktadır. "
+            "Piyasa bu haberi olumlu fiyatlamaya başlamış olabilir; "
+            "hacim artışı ve momentum sinyalleri teyit için izlenmelidir. "
+            "Tek habere dayalı pozisyon açmak yerine trend onayı beklemek önerilir."
+        ),
+        "negatif": (
+            f"{assets_str} üzerinde baskı oluşturabilecek bu haber {risk_label} kapsamındadır. "
+            "Kısa vadede satış baskısı ve volatilite artışı gündeme gelebilir. "
+            "Stop-loss seviyeleri belirlenmeli ve pozisyon büyüklüğü bu koşullara göre ayarlanmalıdır. "
+            "Ek haber akışına dikkat edilmesi kritik önem taşımaktadır."
+        ),
+        "karışık": (
+            f"Bu haber {assets_str} varlıklarını farklı yönlerde etkileyebilir. "
+            f"{category} kategorisinde sektörel ayrışma yaşanması olasıdır. "
+            "Belirsizlik ortamında çeşitlendirme stratejisi korunmalı; "
+            "her varlık birbirinden bağımsız değerlendirilmelidir."
+        ),
+        "nötr": (
+            f"Bu gelişmenin {assets_str} üzerindeki doğrudan etkisi sınırlı görünmektedir. "
+            f"{category} kategorisindeki genel trend değişmediği sürece "
+            "piyasa tepkisi ılımlı kalabilir. "
+            "Makroekonomik bağlam ve sonraki haber akışı yakından takip edilmelidir."
+        ),
+    }
+
+    base = dir_texts.get(direction, dir_texts["nötr"])
+
+    if title:
+        short_title = title if len(title) <= 60 else title[:57] + "…"
+        return f'"{short_title}" — {risk_label} bir gelişme. {base}'
+    return base
+
+
 def _rss_to_signal(article: dict, idx: int) -> NewsSignal:
     try:
         risk = RiskLevel(article.get("risk_level", "medium"))
@@ -247,6 +299,17 @@ def _rss_to_signal(article: dict, idx: int) -> NewsSignal:
     # Türkçe başlık varsa onu, yoksa orijinali kullan
     title   = article.get("tr_title")   or article.get("title", "")
     summary = article.get("tr_summary") or article.get("description") or article.get("summary") or title
+
+    # Gemini yorumu boşsa makaleye özgü kural tabanlı yorum üret
+    raw_comment = (article.get("gemini_comment") or "").strip()
+    if not raw_comment:
+        # article'a kategori ve impact_direction uygula ki rule-based doğru çalışsın
+        temp = dict(article)
+        temp["tr_title"] = title
+        temp.setdefault("impact_direction", "nötr")
+        temp.setdefault("category", _detect_category(title, summary, article.get("source", "")))
+        raw_comment = _generate_rule_based_comment(temp)
+        logger.debug("[news] #%d: gemini_comment boştu, rule-based yorum kullanıldı.", idx)
 
     return NewsSignal(
         id=f"rss-{idx:04d}",
@@ -260,7 +323,7 @@ def _rss_to_signal(article: dict, idx: int) -> NewsSignal:
         url=article.get("url"),
         tr_title=article.get("tr_title", ""),
         tr_summary=article.get("tr_summary", ""),
-        gemini_comment=article.get("gemini_comment", ""),
+        gemini_comment=raw_comment,
         impact_direction=article.get("impact_direction", "nötr"),
         confidence=article.get("confidence", "medium"),
         category=_detect_category(title, summary, article.get("source", "")),

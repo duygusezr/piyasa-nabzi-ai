@@ -229,23 +229,47 @@ function ConfidenceDot({ level }: { level: string }) {
 
 // ── AI Yorum Bileşeni ─────────────────────────────────────────────────────────
 
-const DIRECTION_FALLBACKS: Record<string, string> = {
-  pozitif: 'Bu haber piyasalara olumlu yansıyabilir. İlgili varlıklarda kısa vadeli talep artışı görülebilir. Risk yönetimi ve çeşitlendirme her koşulda önemlidir.',
-  negatif: 'Bu haber ilgili varlıklarda baskı oluşturabilir. Kısa vadede volatilite artışı beklenir. Pozisyon açılmadan önce stop-loss seviyeleri belirlenmeli.',
-  karışık: 'Bu haber farklı varlıkları zıt yönde etkileyebilir. Sektörel ayrışma yaşanabilir; her varlık ayrı ayrı değerlendirilmeli.',
-  nötr:    'Haberin doğrudan piyasa etkisi sınırlı görünmektedir. Ancak makroekonomik bağlam değişirse etki yönü farklılaşabilir.',
-};
+/**
+ * Frontend güvenlik neti: backend'den yorum gelmezse
+ * haber başlığı, varlıklar, risk ve etki yönüne göre
+ * benzersiz bir yorum üretir. Her haber farklı metin alır.
+ */
+function generateFallbackComment(n: NewsSignal): string {
+  const title     = (n.tr_title || n.title || '').trim();
+  const assets    = n.affected_assets?.slice(0, 3) ?? [];
+  const assetsStr = assets.length > 0 ? assets.join(', ') : 'ilgili varlıklar';
+  const category  = n.category || 'Genel';
+  const riskMap: Record<string, string> = { high: 'yüksek riskli', medium: 'orta riskli', low: 'düşük riskli' };
+  const riskLabel = riskMap[n.risk_level] ?? 'orta riskli';
+  const shortTitle = title.length > 60 ? title.slice(0, 57) + '…' : title;
+  const prefix = shortTitle ? `“${shortTitle}” — ${riskLabel} bir gelişme. ` : '';
+  const bodies: Record<string, string> = {
+    pozitif:
+      `${assetsStr} için kısa vadeli yukarı yönlü momentum oluşabilir. ` +
+      'Piyasa bu haberi olumlu fiyatlamaya başlamış olabilir; hacim artışı ve momentum sinyalleri teyit için izlenmelidir. ' +
+      'Tek habere dayalı pozisyon açmak yerine trend onayı beklenmeli.',
+    negatif:
+      `${assetsStr} üzerinde satış baskısı oluşabilir; volatilite artabilir. ` +
+      'Stop-loss seviyeleri belirlenmeli ve pozisyon büyüklüğü bu koşullara göre ayarlanmalı. Ek haber akışı yakından takip edilmeli.',
+    'karışık':
+      `${assetsStr} varlıklarını farklı yönlerde etkileyebilir; ${category} kategorisinde sektörel ayrışma olası. ` +
+      'Belirsizlik kısa süre devam edebilir; her varlık birbirinden bağımsız değerlendirilmeli.',
+    'nötr':
+      `${assetsStr} üzerindeki doğrudan etkisi sınırlı görünmektedir. ` +
+      `${category} kategorisindeki genel trend değişmediği sürece piyasa tepkisi ılımlı kalabilir. Makroekonomik bağlam ve sonraki haber akışı takip edilmeli.`,
+  };
+  return prefix + (bodies[n.impact_direction] ?? bodies['nötr']);
+}
 
 function AiCommentBox({ news }: { news: NewsSignal }) {
-  const comment =
-    (news.gemini_comment && news.gemini_comment.trim())
-      ? news.gemini_comment.trim()
-      : DIRECTION_FALLBACKS[news.impact_direction] ?? DIRECTION_FALLBACKS['nötr'];
+  // Önce Gemini yorumunu dene, sonra frontend fallback'a geç
+  const gemini  = (news.gemini_comment ?? '').trim();
+  const comment = gemini || generateFallbackComment(news);
+  const isReal  = gemini.length > 0;
 
   const [expanded, setExpanded] = useState(false);
-  const isTruncatable = comment.length > 180;
-  const shown = (!isTruncatable || expanded) ? comment : comment.slice(0, 180) + '…';
-  const isReal = !!(news.gemini_comment && news.gemini_comment.trim());
+  const isTruncatable = comment.length > 200;
+  const shown = (!isTruncatable || expanded) ? comment : comment.slice(0, 200) + '…';
 
   return (
     <div className="rounded-lg border border-purple-700/30 bg-purple-900/10 p-3">
