@@ -730,7 +730,6 @@ Bursa Uludağ Üniversitesi — Bilgisayar Programcılığı *(2022–2025 Mezun
 eren@spellfactory.games
 
 **Deneyim:**
-- 🏢 **Spell Factory A.Ş.** — Kurucu Ortak *(Eyl 2025 – Günümüz)* · Bilişim Vadisi Teknopark bünyesinde oyun ve yazılım stüdyosu
 - 🏛️ **Umay Müze Tasarım ve Teknolojileri** — Yazılım Geliştiricisi *(Oca 2025 – Tem 2025)* · AR Book mobil uygulaması
 - 🃏 **Clashub** — Unity Geliştiricisi *(Tem 2024 – Ağu 2024)* · Web3/NFT altyapılı kart oyunu
 - 🎮 **Lodom Creations** — Kurucu Ortak & Oyun Geliştiricisi *(Nis 2023 – Eyl 2025)* · Bilişim Vadisi Erasmus+ Hackathon **1.si**
