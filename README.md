@@ -682,12 +682,65 @@ Bu proje [MIT Lisansı](LICENSE) ile lisanslanmıştır.
 
 **Takım Adı:** TesseractTech
 
-| İsim | Rol | Üniversite |
-|---|---|---|
-| **Duygu** | AI & NLP Developer · VR & Game Developer | Bursa Uludağ Üniversitesi, Bilgisayar Mühendisliği |
-| **Eren Güngörmez** | AI & NLP Developer · VR & Game Developer | Bursa Uludağ Üniversitesi, Bilgisayar Mühendisliği |
+### Duygu Sezer
+**Bilgisayar Mühendisliği Öğrencisi · Yapay Zekâ & NLP Geliştiricisi**  
+Bursa Uludağ Üniversitesi — Bilgisayar Mühendisliği *(Eyl 2022 – Haziran 2026 mezunu)*  
+sezerduygu465@gmail.com · [linkedin.com/in/duygusezrr](https://linkedin.com/in/duygusezrr) · [github.com/duygusezr](https://github.com/duygusezr)
 
-Duygu, TEKNOFEST 2025 Türkçe NLP Yarışması Finalisti'dir.
+**Deneyim:**
+- 🏢 **Bursa Büyükşehir Belediyesi – CBS Şube Müdürlüğü** — Yazılım Mühendisliği Stajyeri *(Tem 2025 – Ağu 2025)*  
+  .NET ve React ile İHA uçuş izin süreçlerini dijitalleştiren “Uçuş Seyir Defteri” geliştirildi; PostGIS ile coğrafi rota ve bölge analizi yapıldı.
+- 🎮 **Uludağ Üniversitesi Dijital Oyun Tasarım Topluluğu** — Yönetim Kurulu Üyesi & Sayman *(Oca 2024 – Günümüz)*  
+  Topluluk bütçesi yönetimi, sponsorluk görüşmeleri, Game Jam ve teknik etkinlik organizasyonları.
+- 📊 **Spell Factory A.Ş. – The Infected Soul** — Gönüllü Pazarlama Yöneticisi *(Eyl 2025 – Günümüz)*  
+  Sosyal medya stratejisi, yayıncı (streamer) iş birlikleri ve topluluk yönetimi.
+
+**Öne Çıkan Projeler:**
+- 🤖 **ELA — Gerçek Zamanlı 3D Avatar AI Asistan** *(Mar 2026 – Günümüz)*  
+  WebSocket üzerinden sesli konuşma, duygu analizi ve 3D avatar animasyonu birleştiren AI asistan. Web Audio API ile lip-sync, Semantic Cache ile milisaniye yanıt süresi.
+- 📜 **Doğal Dil Tabanlı Doküman Analiz Sistemi** *(Eki 2025 – Oca 2026)*  
+  Türkçe PDF analizi için Tesseract OCR + yerel LLaMA modeliyle çevrimdışı RAG asistanı. ChromaDB + Docker ile veri gizliliği odaklı mimari.
+- 👁️ **Görme Engelliler İçin Rehber Uygulaması** *(Oca 2024 – Haz 2024)*  
+  Gerçek zamanlı nesne algılama (ROI) ve sesli uyarı sistemi; IoT tabanlı erişilebilirlik asistanı.
+
+**Başarılar & Sertifikalar:**
+- 🏆 **TEKNOFEST 2025 Türkçe NLP Yarışması — Finalist** *(Ağu 2025)*  
+  Telekom sektörü için LLM + Agentic Framework tabanlı sesli/metin etkileşimli özerk asistan; dinamik araç kullanımı ve gelişmiş durum yönetimi.
+- 🎓 **YÖK Veri Analizi Okulu** *(Eki 2025 – May 2026)*  
+  135.000 başvuru arasından seçilen 50.000 katılımcıdan biri. Marmara Üniversitesi, Boğaziçi ve ODTÜ iş birliği. İleri istatistik, NLP, LLM entegrasyonu.
+
+**Teknik Yetenekler:** Python · C# · C++ · JavaScript · .NET · React.js · FastAPI · TensorFlow · LangChain · ChromaDB · RAG · LLM · NLP · MCP · PostgreSQL · PostGIS · Docker · Unity · WebSocket · Three.js
+
+---
+
+### Eren Güngörmez
+**Game & AI Developer · Girişimci**  
+Bursa Uludağ Üniversitesi — Bilgisayar Programcılığı *(2022–2025 Mezun)*  
+eren@spellfactory.games
+
+**Deneyim:**
+- 🏢 **Spell Factory A.Ş.** — Kurucu Ortak *(Eyl 2025 – Günümüz)* · Bilişim Vadisi Teknopark bünyesinde oyun ve yazılım stüdyosu
+- 🏛️ **Umay Müze Tasarım ve Teknolojileri** — Yazılım Geliştiricisi *(Oca 2025 – Tem 2025)* · AR Book mobil uygulaması
+- 🃏 **Clashub** — Unity Geliştiricisi *(Tem 2024 – Ağu 2024)* · Web3/NFT altyapılı kart oyunu
+- 🎮 **Lodom Creations** — Kurucu Ortak & Oyun Geliştiricisi *(Nis 2023 – Eyl 2025)* · Bilişim Vadisi Erasmus+ Hackathon **1.si**
+- 🔬 **Anticverse** — Temsilci Lider *(Eyl 2022 – Haz 2024)* · Üniversiteler arası teknoloji topluluğu
+- 💼 **Dijital Gen Yazılım** — Stajyer Yazılım Geliştiricisi · Vakıflar Genel Müdürlüğü & Kültür Bakanlığı sesli rehber uygulaması
+
+**Öne Çıkan Projeler:**
+- 🎮 **The Infected Soul** — Psikolojik korku FPS · Steam'de yayınlandı · Unity + C#
+- 🏛️ **Vakıf Eserleri Sesli Rehber** — 200 vakıf eserine yapay zekâ destekli görsel tanıma · Flutter + Python + TensorFlow
+- 🗺️ **AR Navigasyon Sistemi** — Bezmiâlem Vakıf Üniversitesi AR kampüs navigasyonu · Unity
+- 📚 **AR Book** — Çocuk hikayelerini AR ile deneyimleten mobil uygulama · Unity + Flutter
+
+**Yarışma ve Etkinlikler:**
+- 🥇 Bilişim Vadisi Erasmus+ Hackathon — **1.lik (Avrupa Birinciliği)**
+- 🥉 Kütahya Game Jam 2023 — **3.lük**
+- 🥈 IEEE Proje Yarışması — **2.lik** (Bursa Uludağ Üniversitesi)
+- 🎪 GG Convention 2026 — Seçilen 50 indie stüdyodan biri olarak proje sergisi
+- 🎤 DevFest Bursa 2023 & 2024 — Oyun geliştirme ve XR konuşmacısı
+- 🎓 Anticverse İnegöl Teknoloji Kongresi — Organizatör & Konuşmacı (500+ öğrenci)
+
+**Yetenekler:** Unity (C#) · Unreal Engine · AR/VR · Flutter · Python · TensorFlow · Computer Vision · CNN · AI Agent Sistemleri · n8n · Blender · Figma · Web3/NFT
 
 ---
 
