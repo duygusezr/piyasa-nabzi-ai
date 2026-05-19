@@ -14,7 +14,9 @@
 
 **➡️ Uygulama:** [frontend-production-6ea8.up.railway.app](https://frontend-production-6ea8.up.railway.app)
 
-**🎥 Demo Videosu:** [Google Drive'da İzle](https://drive.google.com/file/d/1Hu9IFnEQEq8gN4t5CR5hwtJOW_4kGCyj/view?usp=sharing)
+**🎥 Demo Videosu (YouTube):** [youtube.com/watch?v=p8og5baPe-k](https://www.youtube.com/watch?v=p8og5baPe-k)
+
+**📂 Demo Videosu (Drive):** [Google Drive'da İzle](https://drive.google.com/file/d/1Hu9IFnEQEq8gN4t5CR5hwtJOW_4kGCyj/view?usp=sharing)
 
 > Kayıt olarak tüm özelliklere erişebilirsiniz.
 
