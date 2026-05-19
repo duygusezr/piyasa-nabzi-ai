@@ -234,41 +234,86 @@ function ConfidenceDot({ level }: { level: string }) {
  * haber başlığı, varlıklar, risk ve etki yönüne göre
  * benzersiz bir yorum üretir. Her haber farklı metin alır.
  */
+const _NEGATIVE_KW = [
+  'dip', 'dibe', 'düşüş', 'düştü', 'geriledi', 'zarar', 'kayıp', 'endişe',
+  'uyarı', 'çöktü', 'iflas', 'satış', 'baskı', 'aşağı',
+  '52-week low', 'low', 'fell', 'drops', 'slumps', 'plunges', 'decline', 'loss',
+];
+const _POSITIVE_KW = [
+  'rekor', 'zirve', 'yükseliş', 'artış', 'büyüme', 'onay', 'anlaşma', 'kazandı',
+  'rallied', 'surges', 'record', 'high', 'gains', 'beats', 'approval', 'growth', 'jumps',
+];
+const _GENERIC_ASSETS_FE = new Set([
+  'bist 100', 'bist100', 'xu100', 'bist', 'dolar', 'usd/try', 'altın', 'bitcoin', 'bist 30',
+]);
+
+function detectDirectionFromTitle(title: string): string {
+  const t = title.toLowerCase();
+  const neg = _NEGATIVE_KW.filter(kw => t.includes(kw)).length;
+  const pos = _POSITIVE_KW.filter(kw => t.includes(kw)).length;
+  if (neg > pos) return 'negatif';
+  if (pos > neg) return 'pozitif';
+  return 'nötr';
+}
+
+function extractEntityFromTitle(title: string): string | null {
+  // "X hissesi" / "X shares" / "X stock"
+  const m1 = title.match(
+    /([A-ZÇŞĞİÜÖ][A-Za-zçşğıüö]{1,20}(?:\s+[A-Z][a-z]{1,12})?)\s+(?:hissesi|hisseleri|stock|shares?|ETF|fonu)/
+  );
+  if (m1) return m1[1].trim();
+  // Büyük harf ticker (CHWY, AAPL)
+  const skipWords = new Set(['BIST', 'TCMB', 'NATO', 'FED', 'ECB', 'IMF', 'ABD',
+                             'USD', 'EUR', 'TRY', 'BTC', 'ETH', 'SOL', 'BNB', 'XRP',
+                             'NFT', 'IPO', 'ETF', 'GDP']);
+  const m2 = title.match(/\b([A-Z]{2,5})\b/);
+  if (m2 && !skipWords.has(m2[1])) return m2[1];
+  return null;
+}
+
 function generateFallbackComment(n: NewsSignal): string {
   const title    = (n.tr_title || n.title || '').trim();
   const assets   = n.affected_assets?.slice(0, 3) ?? [];
-  const primary  = assets[0] ?? 'ilgili varlık';
-  const secondary = assets.slice(1, 3).join(', ');
   const category = n.category || 'Genel';
 
-  const shortTitle = title.length > 60 ? title.slice(0, 57) + '…' : title;
+  // Entity tespiti: başlıktan > specific asset > generic asset
+  const entity = extractEntityFromTitle(title);
+  const specificAssets = assets.filter(a => !_GENERIC_ASSETS_FE.has(a.toLowerCase()));
+  const primary = entity ?? specificAssets[0] ?? assets[0]
+    ?? (title.split(' ').find(w => w.length > 3 && w[0] === w[0].toUpperCase() && w[0] !== w[0].toLowerCase()) || 'ilgili varlık');
+  const secondary = assets.filter(a => a !== primary).slice(0, 2).join(', ');
+
+  // Yön tespiti: meta veriden > başlıktan
+  let dir = n.impact_direction;
+  if (dir === 'nötr' || !dir) {
+    const detected = detectDirectionFromTitle(title);
+    if (detected !== 'nötr') dir = detected;
+  }
+
+  const shortTitle = title.length > 65 ? title.slice(0, 62) + '…' : title;
   const prefix = shortTitle ? `“${shortTitle}” — ` : '';
   const disclaimer = ' Bu yorum simülasyon amaçlıdır.';
 
   let verdict: string;
   let reason: string;
 
-  if (n.impact_direction === 'pozitif') {
+  if (dir === 'pozitif') {
     verdict = `Bu haber ${primary} fiyatını YÜKSELTİR.`;
     reason  = `${category} kaynaklı bu olumlu gelişme ${primary} talebini artırır` +
               (secondary ? `; ${secondary} da pozitif etkilenir` : '') +
-              '. Fiyat hareketini doğrulamak için hacim artışı takip edilmeli.';
-  } else if (n.impact_direction === 'negatif') {
+              '. Hacim artışı teyit için takip edilmeli.';
+  } else if (dir === 'negatif') {
     verdict = `Bu haber ${primary} fiyatını DÜŞÜRÜR.`;
     reason  = `Bu olumsuz gelişme ${primary} üzerinde satış baskısı yaratır` +
               (secondary ? `; ${secondary} da olumsuz etkilenir` : '') +
-              '. Destek seviyesi kırılırsa düşüş hızlanabilir.';
-  } else if (n.impact_direction === 'karışık') {
+              '. Destek kırılırsa düşüş hızlanabilir.';
+  } else if (dir === 'karışık') {
     const second = assets[1] ?? 'diğer varlıklar';
     verdict = `Bu haber ${primary}'i yükseltir, ${second}'yi baskılar.`;
-    reason  = `${category} kategorisinde sektörel ayrışma yaşanır; ` +
-              'her varlık birbirinden bağımsız değerlendirilmeli. ' +
-              'Belirsizlik kademeli açıklamalarla azalabilir.';
+    reason  = `${category} kategorisinde sektörel ayrışma yaşanır; her varlık bağımsız değerlendirilmeli.`;
   } else {
     verdict = `Bu haberin ${primary} üzerinde belirgin yönlü etkisi beklenmez.`;
-    reason  = `${category} kategorisindeki mevcut trend devam eder; ` +
-              'piyasa fiyatlamada bu haberi ikincil görüyor. ' +
-              'Farklı bir katalist çıkmazsa yön değişmesi öngörülmez.';
+    reason  = `${category} kategorisindeki mevcut trend devam eder; piyasa bu haberi ikincil görüyor.`;
   }
 
   return prefix + verdict + ' ' + reason + disclaimer;

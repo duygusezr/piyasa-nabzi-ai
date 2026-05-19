@@ -238,39 +238,134 @@ def _apply_cache(article: dict) -> dict:
     return article
 
 
+# ── Başlıktan entity ve etki yönü tespiti ──────────────────────────────────
+
+import re as _re
+
+_NEGATIVE_TITLE_KW = [
+    "dip", "dibe", "düşüş", "düştü", "düştürdü", "geriledi", "kaybet", "kayb",
+    "zarar", "kayıp", "endişe", "uyarı", "risk", "çöktü", "krizi", "çöküş",
+    "iflâs", "iflas", "satış", "baskı", "aşağı", "zayıfladı", "eridik",
+    "52-week low", "52 hafta", "low", "fell", "drops", "slumps", "plunges",
+    "decline", "loss", "warning", "concern", "sell‑off", "selloff",
+]
+_POSITIVE_TITLE_KW = [
+    "rekor", "zirve", "yükseliş", "yükselt", "artış", "artırdı", "kaçırdı",
+    "büyüme", "onay", "anlaşma", "kazandı", "güçlü", "pozitif", "aştı",
+    "rallied", "surges", "record", "high", "gains", "beats", "approval",
+    "growth", "strong", "boost", "jumps", "soars",
+]
+
+def _detect_impact_from_title(title: str) -> str:
+    """Anahtar kelimeler üzerinden başlıktan etki yönü tahmin eder."""
+    t = (title or "").lower()
+    neg = sum(1 for kw in _NEGATIVE_TITLE_KW if kw in t)
+    pos = sum(1 for kw in _POSITIVE_TITLE_KW if kw in t)
+    if neg > pos:
+        return "negatif"
+    if pos > neg:
+        return "pozitif"
+    return "nötr"
+
+
+def _extract_entity_from_title(title: str) -> str | None:
+    """
+    Başlıktan şirket adı veya ticker çıkarır.
+    Desteklenen kalıplar:
+      - "Chewy hissesi", "Apple shares", "Tesla stock"
+      - Büyük harfle başlayan tek/çift kelime + hisse/share/stock
+      - Sadece büyük harf kelimeler (CHWY, AAPL, TSLA)
+    """
+    if not title:
+        return None
+    # "X hissesi" / "X shares" / "X stock" åkalıbı
+    m = _re.search(
+        r'([A-ZÇŞĞİÜÖ][A-Za-zçşğıüöâîû]{1,20}(?:\s+[A-Z][a-z]{1,12})?)'  # başlık kelimesi
+        r'\s+(?:hissesi|hisseleri|stock|shares?|ETF|fonu)',
+        title,
+    )
+    if m:
+        return m.group(1).strip()
+    # Sadece büyük harf ticker (CHWY, AAPL)
+    m = _re.search(r'\b([A-Z]{2,5})\b', title)
+    if m:
+        word = m.group(1)
+        # BIST, TCMB, NATO, FED gibiözel durumları koru, şirket harici sözcükleri filtrele
+        skip = {"BIST", "TCMB", "NATO", "FED", "ECB", "IMF", "ABD", "USD", "EUR", "TRY",
+                "BTC", "ETH", "SOL", "BNB", "XRP", "NFT", "IPO", "ETF", "GDP"}
+        if word not in skip:
+            return word
+    return None
+
+
+# Genel varlıklar — bunlar şirket değil, spesifik haber başlıklarında öncelik verilmemeli
+_GENERIC_ASSETS = {"bist 100", "bist100", "xu100", "bist", "dolar", "usd/try",
+                  "altın", "bitcoin", "bist 30", "xu030"}
+
+
 def _generate_rule_based_comment(article: dict) -> str:
     """
     Gemini yorumu boş geldiğinde makaleye özgü, NET ve DOĞRUDAN yorum üretir.
+    Başlıktan entity + yön tespit eder; generic varlıkları (BIST 100 gibi) öncelik vermez.
     """
-    title     = (article.get("tr_title") or article.get("title") or "").strip()[:80]
+    title     = (article.get("tr_title") or article.get("title") or "").strip()[:120]
     assets    = article.get("affected_assets") or []
-    primary   = assets[0] if assets else "ilgili varlık"
-    secondary = ", ".join(assets[1:3]) if len(assets) > 1 else ""
-    direction = article.get("impact_direction", "nötr")
-    risk      = article.get("risk_level", "medium")
     category  = article.get("category", "Genel")
-
+    risk      = article.get("risk_level", "medium")
     risk_labels = {"high": "yüksek riskli", "medium": "orta riskli", "low": "düşük riskli"}
     risk_label  = risk_labels.get(str(risk), "orta riskli")
 
-    # İlk cümle: net yön kararı
+    # ─ 1. Başlıktan entity çıkar ───────────────────────────────────────────
+    entity = _extract_entity_from_title(title)
+
+    # Mevcut affected_assets listesindeki generic olmayan öğeler
+    specific_assets = [a for a in assets if a.lower() not in _GENERIC_ASSETS]
+
+    # Birincil varlık: başlıktan çıkarılan entity > specific asset > generic asset
+    if entity:
+        primary = entity
+    elif specific_assets:
+        primary = specific_assets[0]
+    elif assets:
+        primary = assets[0]
+    else:
+        primary = None
+
+    secondary = ", ".join(
+        [a for a in assets if a != primary][:2]
+    ) if assets else ""
+
+    # ─ 2. Yön: önce meta veriden, zayıfsa başlıktan tespit et ───────────────
+    direction = article.get("impact_direction", "nötr")
+    if direction == "nötr":
+        detected = _detect_impact_from_title(title)
+        if detected != "nötr":
+            direction = detected
+            logger.debug("[news:rule] '%s' için yön başlıktan tespit edildi: %s", title[:50], direction)
+
+    # ─ 3. Primary yoksa başlığın ilk anlamı büyük kelimesini kullan ────────
+    if not primary:
+        words = [w for w in title.split() if len(w) > 3 and w[0].isupper()]
+        primary = words[0] if words else "ilgili varlık"
+
+    # ─ 4. Verdict ──────────────────────────────────────────────────────────────
     if direction == "pozitif":
         verdict = f"Bu haber {primary} fiyatını YÜKSELTİR."
         reason  = (
-            f"{category} kaynaklı bu olumlu gelişme {primary} talebini artırır; "
-            + (f"{secondary} da pozitif etkilenir. " if secondary else "")
-            + "Fiyat hareketini doğrulamak için hacim artışı takip edilmeli."
+            f"{risk_label.capitalize()} bu olumlu gelişme {primary} talebini artırır"
+            + (f"; {secondary} da pozitif etkilenir" if secondary else "")
+            + ". Fiyat hareketini doğrulamak için hacim artışı takip edilmeli."
         )
     elif direction == "negatif":
         verdict = f"Bu haber {primary} fiyatını DÜŞÜRÜR."
         reason  = (
-            f"{risk_label.capitalize()} bu gelişme {primary} üzerinde satış baskısı yaratır; "
-            + (f"{secondary} da olumsuz etkilenir. " if secondary else "")
-            + "Destek seviyesi kırılırsa düşüş hızlanabilir."
+            f"{risk_label.capitalize()} bu olumsuz gelişme {primary} üzerinde satış baskısı yaratır"
+            + (f"; {secondary} da olumsuz etkilenir" if secondary else "")
+            + ". Destek seviyesi kırılırsa düşüş hızlanabilir."
         )
     elif direction == "karışık":
-        second = assets[1] if len(assets) > 1 else "diğer varlıklar"
-        verdict = f"Bu haber {primary}'i yükseltir, {second}'yi baskılar."
+        second_name = (assets[1] if len(assets) > 1 else secondary) or "diğer varlıklar"
+        verdict = f"Bu haber {primary}'i yükseltir, {second_name}'yi baskılar."
         reason  = (
             f"{category} kategorisinde sektörel ayrışma yaşanır; "
             "her varlık birbirinden bağımsız değerlendirilmeli. "
@@ -281,10 +376,10 @@ def _generate_rule_based_comment(article: dict) -> str:
         reason  = (
             f"{category} kategorisindeki mevcut trend devam eder; "
             "piyasa fiyatlamada bu haberi ikincil görüyor. "
-            "Farklı bir katalist çıkmazsa yön beklentisi yönünde hareket öngörülmez."
+            "Farklı bir katalist çıkmazsa yön değişmesi öngörülmez."
         )
 
-    short_title = title if len(title) <= 60 else title[:57] + "…"
+    short_title = title if len(title) <= 65 else title[:62] + "…"
     prefix = f'“{short_title}” — ' if short_title else ""
     disclaimer = " Bu yorum simülasyon amaçlıdır."
     return prefix + verdict + " " + reason + disclaimer
