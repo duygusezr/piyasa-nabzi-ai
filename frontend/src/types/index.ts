@@ -293,6 +293,27 @@ export interface AssistantAskResponse {
   generated_at: string;
 }
 
+// ── Gerçek Portföy (localStorage tabanlı) ───────────────────────────────────
+export interface RealPortfolioItem {
+  id: string;
+  symbol: string;
+  name: string;
+  category: string;
+  quantity: number;
+  purchase_price: number;  // TRY cinsinden alış fiyatı
+  purchase_date: string;   // ISO tarih (YYYY-MM-DD)
+  notes?: string;
+}
+
+export interface RealPortfolioPosition extends RealPortfolioItem {
+  current_price: number;
+  market_value: number;
+  cost_basis: number;
+  pnl: number;
+  pnl_pct: number;
+  has_live_price: boolean;
+}
+
 // ── Grafik / Geçmiş veri ─────────────────────────────────────────────────────
 export interface CandleData {
   time: number;    // UTC saniye (Unix timestamp)
