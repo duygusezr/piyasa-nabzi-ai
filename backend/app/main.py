@@ -166,9 +166,19 @@ AGENT_FLOW = [
 def _build_assistant_analysis(raw: dict) -> AssistantAnalysis:
     logger.info("[main:assistant] AssistantAnalysis olusturuluyor — anahtarlar: %s", list(raw.keys()))
 
+    def _safe_int(val, default: int = 0) -> int:
+        """Herhangi bir değeri (float, float-string, None) güvenle int'e çevirir."""
+        if val is None:
+            return default
+        try:
+            return int(float(val))
+        except (TypeError, ValueError):
+            return default
+
     def _to_allocation(a: dict) -> AllocationItem:
-        pct = a.get("percent") or a.get("percentage") or 0
-        return AllocationItem(asset=str(a.get("asset", "")), percent=int(pct))
+        # percent veya percentage field'ini al; 0'ı da geçerli say
+        raw_pct = a.get("percent") if a.get("percent") is not None else a.get("percentage", 0)
+        return AllocationItem(asset=str(a.get("asset", "")), percent=_safe_int(raw_pct))
 
     def _to_affected_asset(a: dict) -> AffectedAsset:
         return AffectedAsset(
@@ -186,6 +196,15 @@ def _build_assistant_analysis(raw: dict) -> AssistantAnalysis:
             risk=str(o.get("risk", "orta")),
         )
 
+    def _get_score(d: dict, *keys: str, default: int = 5) -> int:
+        """Farklı alan adlarında gelebilen skoru bulur; float/string değerleri güvenle işler."""
+        for k in keys:
+            v = d.get(k)
+            if v is not None:
+                result = _safe_int(v, default)
+                return max(1, min(10, result))
+        return default
+
     def _to_scenario(s: dict) -> "AssistantScenario | None":
         try:
             alloc = []
@@ -198,9 +217,9 @@ def _build_assistant_analysis(raw: dict) -> AssistantAnalysis:
                 name=str(s.get("name", "Senaryo")),
                 allocation=alloc,
                 logic=str(s.get("logic", "")),
-                riskScore=int(s.get("riskScore") or s.get("risk_score") or 5),
-                opportunityScore=int(s.get("opportunityScore") or s.get("opportunity_score") or 5),
-                volatilityScore=int(s.get("volatilityScore") or s.get("volatility_score") or 5),
+                riskScore=_get_score(s, "riskScore", "risk_score"),
+                opportunityScore=_get_score(s, "opportunityScore", "opportunity_score"),
+                volatilityScore=_get_score(s, "volatilityScore", "volatility_score"),
             )
         except Exception as se:
             logger.error("[main:assistant] Senaryo olusturma hatasi ('%s'): %s", s.get("name", "?"), se)
@@ -224,6 +243,12 @@ def _build_assistant_analysis(raw: dict) -> AssistantAnalysis:
         scenarios = [sc for s in raw.get("scenarios", []) if (sc := _to_scenario(s)) is not None]
 
         result = AssistantAnalysis(
+            netGorus=raw.get("netGorus", ""),
+            kisaVadeBeklenti=raw.get("kisaVadeBeklenti", ""),
+            guvenSkoru=_safe_int(raw.get("guvenSkoru"), 50),
+            anaSebep=raw.get("anaSebep", ""),
+            portfoyEtkisi=raw.get("portfoyEtkisi", ""),
+            izlenecekSeviye=raw.get("izlenecekSeviye", ""),
             directAnswer=raw.get("directAnswer", ""),
             marketContext=raw.get("marketContext", ""),
             affectedAssets=affected_assets,

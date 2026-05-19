@@ -39,6 +39,80 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+// ── Senaryo Kartı ────────────────────────────────────────────────────────────────────────
+const SCENARIO_META: Record<string, {
+  accent: string; bg: string; border: string; bar: string; label: string;
+}> = {
+  Koruyucu: { accent: 'text-emerald-400', bg: 'bg-emerald-900/15', border: 'border-emerald-700/40', bar: 'bg-emerald-500', label: '🛡️ Koruyucu' },
+  Dengeli:  { accent: 'text-amber-400',   bg: 'bg-amber-900/15',   border: 'border-amber-700/40',   bar: 'bg-amber-500',   label: '⚖️ Dengeli'  },
+  Agresif:  { accent: 'text-rose-400',    bg: 'bg-rose-900/15',    border: 'border-rose-700/40',    bar: 'bg-rose-500',    label: '🚀 Agresif'  },
+};
+
+function getScenarioMeta(name: string) {
+  const key = Object.keys(SCENARIO_META).find(k => name.includes(k));
+  return SCENARIO_META[key ?? 'Dengeli'];
+}
+
+function ScoreBar({ label, value, barClass }: { label: string; value: number; barClass: string }) {
+  const safe = Math.max(0, Math.min(10, Number(value) || 0));
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-gray-500 text-xs w-16 shrink-0">{label}</span>
+      <div className="flex-1 h-1.5 bg-gray-700/60 rounded-full overflow-hidden">
+        <div className={`h-full rounded-full ${barClass}`} style={{ width: `${safe * 10}%` }} />
+      </div>
+      <span className="text-gray-400 text-xs w-4 text-right">{safe}</span>
+    </div>
+  );
+}
+
+function ScenarioCard({ s }: { s: import('../types').AssistantScenario }) {
+  const meta = getScenarioMeta(s.name);
+  const allocation = (s.allocation ?? []).filter(a => (a.percent ?? 0) > 0).slice(0, 5);
+  const totalPct = allocation.reduce((sum, a) => sum + (a.percent ?? 0), 0);
+
+  return (
+    <div className={`rounded-xl border p-4 space-y-3 ${meta.bg} ${meta.border}`}>
+      {/* Başlık */}
+      <p className={`font-bold text-sm ${meta.accent}`}>{meta.label.split(' ').slice(1).join(' ') || s.name}</p>
+
+      {/* Skorlar */}
+      <div className="space-y-1.5">
+        <ScoreBar label="Risk" value={s.riskScore} barClass={meta.bar} />
+        <ScoreBar label="Fırsat" value={s.opportunityScore} barClass={meta.bar} />
+        <ScoreBar label="Volatilite" value={s.volatilityScore} barClass={meta.bar} />
+      </div>
+
+      {/* Dağılım */}
+      {allocation.length > 0 && (
+        <div className="space-y-1.5 pt-2 border-t border-white/5">
+          <p className="text-gray-600 text-xs uppercase tracking-wide font-medium">Dağılım</p>
+          {allocation.map((a, i) => {
+            const pct = a.percent ?? 0;
+            const barWidth = totalPct > 0 ? (pct / totalPct) * 100 : pct;
+            return (
+              <div key={i} className="flex items-center gap-2">
+                <span className="text-gray-400 text-xs flex-1 truncate" title={a.asset}>{a.asset}</span>
+                <div className="w-14 h-1.5 bg-gray-700/60 rounded-full overflow-hidden shrink-0">
+                  <div className={`h-full rounded-full ${meta.bar}`} style={{ width: `${barWidth}%` }} />
+                </div>
+                <span className="text-gray-300 text-xs w-7 text-right shrink-0">%{pct}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Mantık */}
+      {s.logic && (
+        <p className="text-gray-400 text-xs leading-relaxed pt-2 border-t border-white/5">
+          {s.logic}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ── Verdict Card — Net Görüş ──────────────────────────────────────────────────
 function VerdictCard({ answer }: { answer: AssistantAnalysis }) {
   const { netGorus, kisaVadeBeklenti, guvenSkoru, anaSebep, portfoyEtkisi, izlenecekSeviye } = answer;
@@ -479,33 +553,7 @@ export default function AssistantPage() {
             <Section title="📈 Olası Senaryolar">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 {answer.scenarios.map((s, i) => (
-                  <div key={i} className="bg-gray-800/50 rounded-xl p-4">
-                    <p className="text-white font-semibold text-sm mb-2">{s.name}</p>
-                    <div className="space-y-1 mb-3">
-                      <div className="flex justify-between text-xs">
-                        <span className="text-gray-500">Risk</span>
-                        <span className="text-white">{s.riskScore}/10</span>
-                      </div>
-                      <div className="flex justify-between text-xs">
-                        <span className="text-gray-500">Fırsat</span>
-                        <span className="text-white">{s.opportunityScore}/10</span>
-                      </div>
-                      <div className="flex justify-between text-xs">
-                        <span className="text-gray-500">Volatilite</span>
-                        <span className="text-white">{s.volatilityScore}/10</span>
-                      </div>
-                    </div>
-                    {s.allocation.slice(0, 4).map(a => (
-                      <div key={a.asset} className="flex items-center gap-2 mb-1">
-                        <div className="flex-1 bg-gray-700 rounded-full h-1">
-                          <div className="bg-blue-500 h-1 rounded-full" style={{ width: `${a.percent}%` }} />
-                        </div>
-                        <span className="text-xs text-gray-400 w-24 truncate">{a.asset}</span>
-                        <span className="text-xs text-gray-300 w-8 text-right">{a.percent}%</span>
-                      </div>
-                    ))}
-                    <p className="text-gray-400 text-xs mt-2 leading-relaxed line-clamp-3">{s.logic}</p>
-                  </div>
+                  <ScenarioCard key={i} s={s} />
                 ))}
               </div>
             </Section>
