@@ -678,12 +678,16 @@ Bu proje [MIT Lisansı](LICENSE) ile lisanslanmıştır.
 
 ---
 
-## 👤 Geliştirici
+## 👥 Geliştirici Ekip
 
-**Duygu**  
-Bilgisayar Mühendisliği — Bursa Uludağ Üniversitesi  
-AI & NLP Developer · VR & Game Developer  
-TEKNOFEST 2025 Türkçe NLP Yarışması Finalisti
+**Takım Adı:** TesseractTech
+
+| İsim | Rol | Üniversite |
+|---|---|---|
+| **Duygu** | AI & NLP Developer · VR & Game Developer | Bursa Uludağ Üniversitesi, Bilgisayar Mühendisliği |
+| **Eren Güngörmez** | AI & NLP Developer · VR & Game Developer | Bursa Uludağ Üniversitesi, Bilgisayar Mühendisliği |
+
+Duygu, TEKNOFEST 2025 Türkçe NLP Yarışması Finalisti'dir.
 
 ---
 
